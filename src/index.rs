@@ -1,12 +1,12 @@
-use std::{ffi::OsString, io, path::PathBuf};
+use std::{io, path::PathBuf};
 
 use walkdir::WalkDir;
 
-use crate::Source;
+use crate::{Source, SourceId};
 
 #[derive(Debug)]
 pub struct IndexEntry {
-	pub source: OsString,
+	pub source: SourceId,
 	pub path: PathBuf,
 	pub size: u64,
 }
@@ -43,8 +43,6 @@ pub fn create_index(sources: Vec<Source>) -> Result<Vec<IndexEntry>, io::Error> 
 		prev_index_len = index.len();
 		println!("Found {files_count} files with a total size of {}.", format(total_size));
 	}
-	
-	index.sort_by_key(|entry| u64::MAX - entry.size);
 	
 	Ok(index)
 }
