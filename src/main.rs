@@ -29,7 +29,7 @@ fn main() {
 	
 	match args.command {
 		Commands::Pack(pack_args) => {
-			backy::pack(pack_args.sources, pack_args.out);
+			backy::pack(pack_args.sources, pack_args.out).unwrap();
 		},
 	}
 }
