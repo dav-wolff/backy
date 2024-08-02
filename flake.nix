@@ -58,7 +58,7 @@
 				
 				devShells.default = craneLib.devShell {
 					packages = with pkgs; [
-						fenix.rust-analyzer
+						rust-analyzer
 					];
 				};
 			}
