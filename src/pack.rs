@@ -1,8 +1,14 @@
 use std::{fs::{self, File}, io::{self, Seek, Write}, mem, path::PathBuf};
 
+use xz2::write::XzEncoder;
+
 use crate::{group::create_groups, index::create_index, Entry, Source, BKY_HEADER};
 
-pub fn pack(sources: Vec<PathBuf>, out: PathBuf, max_group_size: Option<u64>) -> Result<(), io::Error> {
+pub fn pack(sources: Vec<PathBuf>, out: PathBuf, max_group_size: Option<u64>, compression_level: u32) -> Result<(), io::Error> {
+	if compression_level > 9 {
+		panic!("compression_level must be a number between 0 and 9");
+	}
+	
 	let format = humansize::make_format(humansize::BINARY);
 	
 	// TODO: get rid of unwraps
@@ -28,17 +34,17 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, max_group_size: Option<u64>) ->
 			let i = i + 1;
 			let path = out.join(format!("{i}.bky"));
 			println!("Writing group {i} of size {} to {}...", format(group.size), path.to_string_lossy());
-			pack_group(path, group.entries)?;
+			pack_group(path, group.entries, compression_level)?;
 		}
 	} else {
 		println!("Writing backup of size {} to {}...", format(total_size), out.to_string_lossy());
-		pack_group(out, index)?;
+		pack_group(out, index, compression_level)?;
 	}
 	
 	Ok(())
 }
 
-fn pack_group(out: PathBuf, entries: Vec<Entry>) -> Result<(), io::Error> {
+fn pack_group(out: PathBuf, entries: Vec<Entry>, compression_level: u32) -> Result<(), io::Error> {
 	let mut file = File::create_new(out)?;
 	
 	file.write_all(BKY_HEADER)?;
@@ -71,24 +77,28 @@ fn pack_group(out: PathBuf, entries: Vec<Entry>) -> Result<(), io::Error> {
 		file.write_all(&0u64.to_le_bytes())?;
 	}
 	
+	
 	// tar archives
-	let mut prev_position = file.stream_position()?;
+	let mut encoder = XzEncoder::new(&file, compression_level);
+	let mut prev_position = encoder.total_in();
 	for (source, entries, source_size) in &mut source_groups {
-		let mut tar_builder = tar::Builder::new(file);
+		let mut tar_builder = tar::Builder::new(encoder);
 		
-		for entry in entries {
+		for entry in entries.iter() {
 			tar_builder.append_file(
 				entry.strip_prefix(&source.path).expect("all entries should be located below the source path"),
-				&mut File::open(&entry)?
+				&mut File::open(entry)?
 			)?;
 		}
 		
-		file = tar_builder.into_inner()?;
+		encoder = tar_builder.into_inner()?;
 		
-		let new_position = file.stream_position()?;
+		let new_position = encoder.total_in();
 		*source_size = new_position - prev_position;
 		prev_position = new_position;
 	}
+	
+	mem::drop(encoder);
 	
 	file.seek(io::SeekFrom::Start((BKY_HEADER.len() + mem::size_of::<u32>()) as u64))?;
 	

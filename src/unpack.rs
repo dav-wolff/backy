@@ -1,4 +1,6 @@
-use std::{borrow::Borrow, fs::{self, File}, io::{self, ErrorKind, Read}, mem, path::{Path, PathBuf}};
+use std::{fs::{self, File}, io::{self, Read}, mem, path::{Path, PathBuf}};
+
+use xz2::read::XzDecoder;
 
 use crate::BKY_HEADER;
 
@@ -37,6 +39,7 @@ fn unpack_group(group: PathBuf, out: &Path) -> Result<(), io::Error> {
 	
 	let mut source_groups: Vec<(String, u64)> = Vec::with_capacity(groups_len as usize);
 	
+	// header
 	for _ in 0..groups_len {
 		file.read_exact(&mut buf32)?;
 		let id_len = u32::from_le_bytes(buf32);
@@ -50,11 +53,13 @@ fn unpack_group(group: PathBuf, out: &Path) -> Result<(), io::Error> {
 		source_groups.push((source_id, source_size));
 	}
 	
+	// tar archive
+	let mut decoder = XzDecoder::new(&file);
 	for (source_id, source_size) in source_groups {
 		let directory = out.join(source_id);
 		fs::create_dir_all(&directory)?;
 		
-		let read = (&file).take(source_size);
+		let read = (&mut decoder).take(source_size);
 		let mut archive = tar::Archive::new(read);
 		archive.unpack(&directory)?;
 		read_to_end(archive.into_inner())?;
@@ -68,7 +73,7 @@ fn read_to_end(mut read: impl Read) -> Result<(), io::Error> {
 	
 	loop {
 		match read.read(&mut buf) {
-			Ok(bytes_read) if bytes_read == 0 => return Ok(()),
+			Ok(0) => return Ok(()),
 			Ok(_) => (),
 			Err(err) => return Err(err),
 		}

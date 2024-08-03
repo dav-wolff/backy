@@ -12,6 +12,14 @@ fn parse_size(arg: &str) -> Result<u64, parse_size::Error> {
 		.parse_size(arg)
 }
 
+fn parse_compression_level(arg: &str) -> Result<u32, String> {
+	let level: i32 = arg.parse().map_err(|err| format!("{err}"))?;
+	match level {
+		0..=9 => Ok(level as u32),
+		_ => Err("compression-level must be a number from 0 to 9".to_owned()),
+	}
+}
+
 #[derive(Parser, Debug)]
 #[command(version, propagate_version = true, author, about)]
 struct BackyArgs {
@@ -37,6 +45,9 @@ struct PackArgs {
 	/// Maximum size of files in the out directory
 	#[arg(short, long, value_parser = parse_size)]
 	size: Option<u64>,
+	/// Level of compression to use
+	#[arg(short = 'l', long, value_parser = parse_compression_level, default_value = "9")]
+	compression_level: u32,
 }
 
 /// Unpacks a backy archive into its sources
@@ -54,7 +65,7 @@ fn main() {
 	
 	match args.command {
 		Commands::Pack(pack_args) => {
-			backy::pack(pack_args.sources, pack_args.out, pack_args.size).unwrap();
+			backy::pack(pack_args.sources, pack_args.out, pack_args.size, pack_args.compression_level).unwrap();
 		},
 		Commands::Unpack(unpack_args) => {
 			backy::unpack(unpack_args.archive, unpack_args.out).unwrap();
