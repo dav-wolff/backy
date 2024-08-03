@@ -41,7 +41,7 @@ impl ProgressDisplay {
 		self.progress_bars.insert_from_back(1, progress.clone());
 		
 		ProgressTracker {
-			display: &self,
+			display: self,
 			progress,
 			total_progress,
 		}

@@ -3,9 +3,9 @@ use std::{fs::{self, File}, io::{self, Seek, Write}, mem, path::{Path, PathBuf}}
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use xz2::write::XzEncoder;
 
-use crate::{group::create_groups, index::create_index, progress::{ProgressDisplay, ProgressTracker}, Entry, Source, BKY_HEADER};
+use crate::{crypto::{generate_iv, EncryptWriter, Key, IV}, group::create_groups, index::create_index, progress::{ProgressDisplay, ProgressTracker}, Entry, Source, BKY_HEADER};
 
-pub fn pack(sources: Vec<PathBuf>, out: PathBuf, max_group_size: Option<u64>, compression_level: u32) -> Result<(), io::Error> {
+pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Option<u64>, compression_level: u32) -> Result<(), io::Error> {
 	if compression_level > 9 {
 		panic!("compression_level must be a number between 0 and 9");
 	}
@@ -35,20 +35,20 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, max_group_size: Option<u64>, co
 			.map(|(i, group)| -> Result<_, io::Error> {
 				let i = i + 1;
 				let path = out.join(format!("{i}.bky"));
-				pack_group(&path, group.entries, compression_level, progress_display.new_tracker(path.to_string_lossy().into_owned(), group.size))?;
+				pack_group(&path, group.entries, key, compression_level, progress_display.new_tracker(path.to_string_lossy().into_owned(), group.size))?;
 				
 				Ok(())
 			})
 			.collect::<Result<(), _>>()?;
 	} else {
 		let progress_display = ProgressDisplay::new(total_size);
-		pack_group(&out, index, compression_level, progress_display.new_tracker("Total", total_size))?;
+		pack_group(&out, index, key, compression_level, progress_display.new_tracker("Total", total_size))?;
 	}
 	
 	Ok(())
 }
 
-fn pack_group(out: &Path, entries: Vec<Entry>, compression_level: u32, progress_tracker: ProgressTracker) -> Result<(), io::Error> {
+fn pack_group(out: &Path, entries: Vec<Entry>, key: Key, compression_level: u32, progress_tracker: ProgressTracker) -> Result<(), io::Error> {
 	let mut file = File::create_new(out)?;
 	
 	file.write_all(BKY_HEADER)?;
@@ -66,21 +66,21 @@ fn pack_group(out: &Path, entries: Vec<Entry>, compression_level: u32, progress_
 		}
 	}
 	
-	// header
-	let groups_len: u32 = source_groups.len() as u32;
-	file.write_all(&groups_len.to_le_bytes())?;
+	let iv = generate_iv();
+	file.write_all(&iv)?;
+	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
 	
-	for (source, _, _) in &source_groups {
-		let id_len: u32 = source.id.len() as u32;
-		file.write_all(&id_len.to_le_bytes())?;
-		file.write_all(source.id.as_bytes())?;
-		// placeholder for archive length
-		file.write_all(&0u64.to_le_bytes())?;
-	}
+	// skip header
+	let header_size = mem::size_of::<u32>() + source_groups.iter() //                             source_groups_len(4)
+		.map(|(source, _, _)| mem::size_of::<u32>() + source.id.len() + mem::size_of::<u64>()) // + sum(id_len(4) + id + source_len(8))
+		.sum::<usize>();
+	
+	let skip_buffer = vec![0; header_size];
+	encrypter.write_all(&skip_buffer)?;
 	
 	
 	// tar archives
-	let mut encoder = XzEncoder::new(&file, compression_level);
+	let mut encoder = XzEncoder::new(encrypter, compression_level);
 	let mut prev_position = 0;
 	for (source, entries, source_size) in &mut source_groups {
 		let mut tar_builder = tar::Builder::new(encoder);
@@ -102,12 +102,20 @@ fn pack_group(out: &Path, entries: Vec<Entry>, compression_level: u32, progress_
 	
 	mem::drop(encoder);
 	
-	file.seek(io::SeekFrom::Start((BKY_HEADER.len() + mem::size_of::<u32>()) as u64))?;
+	// reset file
+	file.seek(io::SeekFrom::Start((BKY_HEADER.len() + mem::size_of::<IV>()) as u64))?;
+	// reset encrypter
+	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
 	
-	// fill header placeholders
+	// header
+	let groups_len: u32 = source_groups.len() as u32;
+	encrypter.write_all(&groups_len.to_le_bytes())?;
+	
 	for (source, _, source_size) in &source_groups {
-		file.seek(io::SeekFrom::Current((mem::size_of::<u32>() + source.id.len()) as i64))?;
-		file.write_all(&source_size.to_le_bytes())?;
+		let id_len: u32 = source.id.len() as u32;
+		encrypter.write_all(&id_len.to_le_bytes())?;
+		encrypter.write_all(source.id.as_bytes())?;
+		encrypter.write_all(&source_size.to_le_bytes())?;
 	}
 	
 	Ok(())

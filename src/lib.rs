@@ -1,14 +1,16 @@
 #![forbid(unsafe_code)]
 #![deny(non_snake_case)]
 
+use std::{path::{Path, PathBuf}, sync::Arc};
 
 mod index;
 mod group;
 mod progress;
 
-mod pack;
-use std::{path::{Path, PathBuf}, sync::Arc};
+mod crypto;
+pub use crypto::{generate_key, Key};
 
+mod pack;
 pub use pack::pack;
 
 mod unpack;

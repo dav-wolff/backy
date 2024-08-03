@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 #![deny(non_snake_case)]
 
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
+use backy::Key;
+use base64::{prelude::BASE64_STANDARD, Engine};
 use clap::{command, Args, Parser, Subcommand};
 
 fn parse_size(arg: &str) -> Result<u64, parse_size::Error> {
@@ -29,11 +31,14 @@ struct BackyArgs {
 
 #[derive(Subcommand, Clone, Debug)]
 enum Commands {
+	/// Generate a key for encrypting and decrypting backy archives
+	GenerateKey,
+	/// Create a new backy archive from the given sources
 	Pack(PackArgs),
+	/// Unpacks a backy archive into its sources
 	Unpack(UnpackArgs),
 }
 
-/// Create a new backy archive from the given sources
 #[derive(Args, Clone, Debug)]
 struct PackArgs {
 	/// All directories / files to include in the backup
@@ -48,27 +53,69 @@ struct PackArgs {
 	/// Level of compression to use
 	#[arg(short = 'l', long, value_parser = parse_compression_level, default_value = "9")]
 	compression_level: u32,
+	/// Key to use for encryption
+	#[arg(short, long, conflicts_with = "key_file")]
+	key: Option<String>,
+	/// File containing the key to use for encryption
+	#[arg(short = 'f', long, conflicts_with = "key")]
+	key_file: Option<PathBuf>,
 }
 
-/// Unpacks a backy archive into its sources
 #[derive(Args, Clone, Debug)]
 struct UnpackArgs {
 	/// The backy archive to unpack (can be a file or directory)
 	archive: PathBuf,
-	// TODO: come up with a description
+	/// Directory to unpack the sources into
 	#[arg(short, long, default_value = "backy")]
 	out: PathBuf,
+	/// Key to use for decryption
+	#[arg(short, long, conflicts_with = "key_file")]
+	key: Option<String>,
+	/// File containing the key to use for decryption
+	#[arg(short = 'f', long, conflicts_with = "key")]
+	key_file: Option<PathBuf>,
 }
 
 fn main() {
 	let args = BackyArgs::parse();
 	
+	
 	match args.command {
+		Commands::GenerateKey => {
+			let key = backy::generate_key();
+			let base64_key = BASE64_STANDARD.encode(key);
+			println!("{base64_key}");
+		},
 		Commands::Pack(pack_args) => {
-			backy::pack(pack_args.sources, pack_args.out, pack_args.size, pack_args.compression_level).unwrap();
+			let key = get_key(pack_args.key, pack_args.key_file);
+			backy::pack(pack_args.sources, pack_args.out, key, pack_args.size, pack_args.compression_level).unwrap();
 		},
 		Commands::Unpack(unpack_args) => {
-			backy::unpack(unpack_args.archive, unpack_args.out).unwrap();
+			let key = get_key(unpack_args.key, unpack_args.key_file);
+			backy::unpack(unpack_args.archive, unpack_args.out, key).unwrap();
 		},
 	}
+}
+
+fn get_key (key_string: Option<String>, key_file: Option<PathBuf>) -> Key {
+	// TODO: handle errors
+	let base64_key = match (key_string, key_file) {
+		(Some(_), Some(_)) => unreachable!("clap ensures key and key_file are mutually exclusive"),
+		(Some(base64_key), None) => base64_key,
+		(None, Some(key_file)) => {
+			let string = fs::read_to_string(key_file).unwrap();
+			string.trim().to_owned()
+		},
+		(None, None) => {
+			rpassword::prompt_password("Enter key: ").unwrap()
+		},
+	};
+	
+	let mut key = Key::default();
+	
+	if BASE64_STANDARD.decode_slice(base64_key, &mut key).unwrap() != 32 {
+		panic!("key has wrong size");
+	}
+	
+	key
 }
