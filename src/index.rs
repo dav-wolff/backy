@@ -1,28 +1,22 @@
-use std::{io, path::PathBuf};
+use std::io;
 
 use walkdir::WalkDir;
 
-use crate::{Source, SourceId};
+use crate::{Entry, Source};
 
-#[derive(Debug)]
-pub struct IndexEntry {
-	pub source: SourceId,
-	pub path: PathBuf,
-	pub size: u64,
-}
-
-pub fn create_index(sources: Vec<Source>) -> Result<Vec<IndexEntry>, io::Error> {
+pub fn create_index(sources: Vec<Source>) -> Result<(Vec<Entry>, u64), io::Error> {
 	let format = humansize::make_format(humansize::BINARY);
 	let mut index = Vec::new();
 	
+	let mut total_size = 0;
 	let mut prev_index_len = 0;
 	
 	for source in sources {
 		println!("Indexing files in {}...", source.path.to_string_lossy());
 		
-		let mut total_size = 0;
+		let mut source_size = 0;
 		
-		for entry in WalkDir::new(source.path).follow_links(true) {
+		for entry in WalkDir::new(&source.path).follow_links(true) {
 			let entry = entry?;
 			
 			if !entry.file_type().is_file() {
@@ -30,19 +24,20 @@ pub fn create_index(sources: Vec<Source>) -> Result<Vec<IndexEntry>, io::Error> 
 			}
 			
 			let size = entry.metadata()?.len();
-			total_size += size;
+			source_size += size;
 			
-			index.push(IndexEntry {
-				source: source.id.clone(),
+			index.push(Entry {
+				source: source.clone(),
 				path: entry.path().to_owned(),
 				size: entry.metadata()?.len(),
 			});
 		}
 		
+		total_size += source_size;
 		let files_count = index.len() - prev_index_len;
 		prev_index_len = index.len();
-		println!("Found {files_count} files with a total size of {}.", format(total_size));
+		println!("Found {files_count} files with a total size of {}.", format(source_size));
 	}
 	
-	Ok(index)
+	Ok((index, total_size))
 }

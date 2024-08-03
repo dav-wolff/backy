@@ -28,7 +28,7 @@ struct PackArgs {
 	#[arg(required = true)]
 	sources: Vec<PathBuf>,
 	/// File to write backup data to, or directory to write files to if --size is specified, defaults to GiB if no unit is given
-	#[arg(short, long, default_value = "backy")]
+	#[arg(short, long, default_value = "backup.bky")]
 	out: PathBuf,
 	/// Maximum size of files in the out directory
 	#[arg(short, long, value_parser = parse_size)]
