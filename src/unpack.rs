@@ -1,9 +1,9 @@
-use std::{fs::{self, DirEntry, File}, io::{self, Read}, mem, path::{Path, PathBuf}};
+use std::{fs::{self, DirEntry, File}, io::{self, Read, Seek}, mem, path::{Path, PathBuf}};
 
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use xz2::read::XzDecoder;
 
-use crate::BKY_HEADER;
+use crate::{progress::{ProgressDisplay, ProgressTracker}, BKY_HEADER};
 
 pub fn unpack(archive: PathBuf, out: PathBuf) -> Result<(), io::Error> {
 	// TODO: return custom errors
@@ -13,21 +13,33 @@ pub fn unpack(archive: PathBuf, out: PathBuf) -> Result<(), io::Error> {
 	
 	if archive.is_dir() {
 		let entries: Vec<DirEntry> = fs::read_dir(archive)?.collect::<Result<_, _>>()?;
+		let total_size: u64 = entries.iter()
+			.map(|entry| -> Result<_, io::Error> {
+				Ok(entry.metadata()?.len())
+			})
+			.sum::<Result<_, _>>()?;
+		
+		let progress_display = ProgressDisplay::new(total_size);
+		
 		entries.into_par_iter()
 			.map(|entry| -> Result<_, io::Error> {
-				unpack_group(entry.path(), &out)?;
+				let progress_tracker = progress_display.new_tracker(entry.path().to_string_lossy().into_owned(), entry.metadata()?.len());
+				unpack_group(entry.path(), &out, progress_tracker)?;
 				
 				Ok(())
 			})
 			.collect::<Result<(), _>>()?;
 	} else {
-		unpack_group(archive, &out)?;
+		let total_size = archive.metadata()?.len();
+		let progress_display = ProgressDisplay::new(total_size);
+		let progress_tracker = progress_display.new_tracker("Total", total_size);
+		unpack_group(archive, &out, progress_tracker)?;
 	}
 	
 	Ok(())
 }
 
-fn unpack_group(group: PathBuf, out: &Path) -> Result<(), io::Error> {
+fn unpack_group(group: PathBuf, out: &Path, progress_tracker: ProgressTracker) -> Result<(), io::Error> {
 	let mut file = File::open(group)?;
 	
 	let mut header = [0u8; BKY_HEADER.len()];
@@ -59,8 +71,11 @@ fn unpack_group(group: PathBuf, out: &Path) -> Result<(), io::Error> {
 		source_groups.push((source_id, source_size));
 	}
 	
+	progress_tracker.advance(file.stream_position()?);
+	
 	// tar archive
 	let mut decoder = XzDecoder::new(&file);
+	let mut prev_position = 0;
 	for (source_id, source_size) in source_groups {
 		let directory = out.join(source_id);
 		fs::create_dir_all(&directory)?;
@@ -69,6 +84,9 @@ fn unpack_group(group: PathBuf, out: &Path) -> Result<(), io::Error> {
 		let mut archive = tar::Archive::new(read);
 		archive.unpack(&directory)?;
 		read_to_end(archive.into_inner())?;
+		
+		progress_tracker.advance(decoder.total_in() - prev_position);
+		prev_position = decoder.total_in();
 	}
 	
 	Ok(())

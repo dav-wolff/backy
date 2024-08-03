@@ -4,9 +4,10 @@
 
 mod index;
 mod group;
+mod progress;
 
 mod pack;
-use std::{path::{Path, PathBuf}, rc::Rc, sync::Arc};
+use std::{path::{Path, PathBuf}, sync::Arc};
 
 pub use pack::pack;
 

@@ -1,16 +1,14 @@
-use std::{fs::{self, File}, io::{self, Seek, Write}, mem, path::PathBuf};
+use std::{fs::{self, File}, io::{self, Seek, Write}, mem, path::{Path, PathBuf}};
 
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use xz2::write::XzEncoder;
 
-use crate::{group::create_groups, index::create_index, Entry, Source, BKY_HEADER};
+use crate::{group::create_groups, index::create_index, progress::{ProgressDisplay, ProgressTracker}, Entry, Source, BKY_HEADER};
 
 pub fn pack(sources: Vec<PathBuf>, out: PathBuf, max_group_size: Option<u64>, compression_level: u32) -> Result<(), io::Error> {
 	if compression_level > 9 {
 		panic!("compression_level must be a number between 0 and 9");
 	}
-	
-	let format = humansize::make_format(humansize::BINARY);
 	
 	// TODO: get rid of unwraps
 	// TODO: create separate ids for folders with same name
@@ -30,45 +28,42 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, max_group_size: Option<u64>, co
 		}
 		
 		let groups = create_groups(index, max_group_size);
+		let progress_display = ProgressDisplay::new(total_size);
 		
 		groups.into_par_iter()
 			.enumerate()
 			.map(|(i, group)| -> Result<_, io::Error> {
 				let i = i + 1;
 				let path = out.join(format!("{i}.bky"));
-				println!("Writing group {i} of size {} to {}...", format(group.size), path.to_string_lossy());
-				pack_group(path, group.entries, compression_level)?;
+				pack_group(&path, group.entries, compression_level, progress_display.new_tracker(path.to_string_lossy().into_owned(), group.size))?;
 				
 				Ok(())
 			})
 			.collect::<Result<(), _>>()?;
 	} else {
-		println!("Writing backup of size {} to {}...", format(total_size), out.to_string_lossy());
-		pack_group(out, index, compression_level)?;
+		let progress_display = ProgressDisplay::new(total_size);
+		pack_group(&out, index, compression_level, progress_display.new_tracker("Total", total_size))?;
 	}
 	
 	Ok(())
 }
 
-fn pack_group(out: PathBuf, entries: Vec<Entry>, compression_level: u32) -> Result<(), io::Error> {
+fn pack_group(out: &Path, entries: Vec<Entry>, compression_level: u32, progress_tracker: ProgressTracker) -> Result<(), io::Error> {
 	let mut file = File::create_new(out)?;
 	
 	file.write_all(BKY_HEADER)?;
 	
-	let mut source_groups: Vec<(Source, Vec<PathBuf>, u64)> = Vec::new();
+	let mut source_groups: Vec<(Source, Vec<Entry>, u64)> = Vec::new();
 	
 	for entry in entries {
-		let (_, source_entries, _) = match source_groups.iter_mut()
-			.find(|(source, _, _)| source.id == entry.source.id)
-		{
-			Some(source_group) => source_group,
-			None => {
-				source_groups.push((entry.source, Vec::new(), 0));
-				source_groups.last_mut().expect("last should exist as it was just inserted")
+		match source_groups.iter_mut().find(|(source, _, _)| source.id == entry.source.id) {
+			Some((_, source_entries, _)) => {
+				source_entries.push(entry);
 			},
-		};
-		
-		source_entries.push(entry.path)
+			None => {
+				source_groups.push((entry.source.clone(), vec![entry], 0));
+			},
+		}
 	}
 	
 	// header
@@ -86,22 +81,23 @@ fn pack_group(out: PathBuf, entries: Vec<Entry>, compression_level: u32) -> Resu
 	
 	// tar archives
 	let mut encoder = XzEncoder::new(&file, compression_level);
-	let mut prev_position = encoder.total_in();
+	let mut prev_position = 0;
 	for (source, entries, source_size) in &mut source_groups {
 		let mut tar_builder = tar::Builder::new(encoder);
 		
 		for entry in entries.iter() {
 			tar_builder.append_file(
-				entry.strip_prefix(&source.path).expect("all entries should be located below the source path"),
-				&mut File::open(entry)?
+				entry.path.strip_prefix(&source.path).expect("all entries should be located below the source path"),
+				&mut File::open(&entry.path)?
 			)?;
+			
+			progress_tracker.advance(entry.size);
 		}
 		
 		encoder = tar_builder.into_inner()?;
 		
-		let new_position = encoder.total_in();
-		*source_size = new_position - prev_position;
-		prev_position = new_position;
+		*source_size = encoder.total_in() - prev_position;
+		prev_position = encoder.total_in();
 	}
 	
 	mem::drop(encoder);
