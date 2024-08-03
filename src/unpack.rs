@@ -1,5 +1,6 @@
-use std::{fs::{self, File}, io::{self, Read}, mem, path::{Path, PathBuf}};
+use std::{fs::{self, DirEntry, File}, io::{self, Read}, mem, path::{Path, PathBuf}};
 
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use xz2::read::XzDecoder;
 
 use crate::BKY_HEADER;
@@ -11,9 +12,14 @@ pub fn unpack(archive: PathBuf, out: PathBuf) -> Result<(), io::Error> {
 	}
 	
 	if archive.is_dir() {
-		for entry in fs::read_dir(archive)? {
-			unpack_group(entry?.path(), &out)?;
-		}
+		let entries: Vec<DirEntry> = fs::read_dir(archive)?.collect::<Result<_, _>>()?;
+		entries.into_par_iter()
+			.map(|entry| -> Result<_, io::Error> {
+				unpack_group(entry.path(), &out)?;
+				
+				Ok(())
+			})
+			.collect::<Result<(), _>>()?;
 	} else {
 		unpack_group(archive, &out)?;
 	}

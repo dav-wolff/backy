@@ -6,7 +6,7 @@ mod index;
 mod group;
 
 mod pack;
-use std::{path::{Path, PathBuf}, rc::Rc};
+use std::{path::{Path, PathBuf}, rc::Rc, sync::Arc};
 
 pub use pack::pack;
 
@@ -17,8 +17,8 @@ const BKY_HEADER: &[u8] = b"backy archive v1\n";
 
 #[derive(Clone, Debug)]
 struct Source {
-	id: Rc<str>,
-	path: Rc<Path>,
+	id: Arc<str>,
+	path: Arc<Path>,
 }
 
 #[derive(Debug)]

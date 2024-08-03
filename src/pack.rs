@@ -1,5 +1,6 @@
 use std::{fs::{self, File}, io::{self, Seek, Write}, mem, path::PathBuf};
 
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use xz2::write::XzEncoder;
 
 use crate::{group::create_groups, index::create_index, Entry, Source, BKY_HEADER};
@@ -30,12 +31,17 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, max_group_size: Option<u64>, co
 		
 		let groups = create_groups(index, max_group_size);
 		
-		for (i, group) in groups.into_iter().enumerate() {
-			let i = i + 1;
-			let path = out.join(format!("{i}.bky"));
-			println!("Writing group {i} of size {} to {}...", format(group.size), path.to_string_lossy());
-			pack_group(path, group.entries, compression_level)?;
-		}
+		groups.into_par_iter()
+			.enumerate()
+			.map(|(i, group)| -> Result<_, io::Error> {
+				let i = i + 1;
+				let path = out.join(format!("{i}.bky"));
+				println!("Writing group {i} of size {} to {}...", format(group.size), path.to_string_lossy());
+				pack_group(path, group.entries, compression_level)?;
+				
+				Ok(())
+			})
+			.collect::<Result<(), _>>()?;
 	} else {
 		println!("Writing backup of size {} to {}...", format(total_size), out.to_string_lossy());
 		pack_group(out, index, compression_level)?;
