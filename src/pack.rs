@@ -78,7 +78,6 @@ fn pack_group(out: &Path, entries: Vec<Entry>, key: Key, compression_level: u32,
 	let skip_buffer = vec![0; header_size];
 	encrypter.write_all(&skip_buffer)?;
 	
-	
 	// tar archives
 	let mut encoder = XzEncoder::new(encrypter, compression_level);
 	let mut prev_position = 0;

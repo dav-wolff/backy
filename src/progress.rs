@@ -39,6 +39,7 @@ impl ProgressDisplay {
 			.with_style(self.style.clone())
 			.with_prefix(label);
 		self.progress_bars.insert_from_back(1, progress.clone());
+		progress.tick();
 		
 		ProgressTracker {
 			display: self,
