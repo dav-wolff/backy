@@ -20,6 +20,7 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Optio
 		.map(|path| path.canonicalize().unwrap())
 		.map(|path| Source {
 			id: path.file_name().unwrap().to_string_lossy().into(),
+			is_file: path.is_file(),
 			path: path.into(),
 		})
 		.collect();
@@ -98,8 +99,8 @@ fn pack_group(
 	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
 	
 	// skip header
-	let header_size = mem::size_of::<u32>() * 2 + source_groups.iter() //                         source_groups_len(4) + flags(4)
-		.map(|(source, _, _)| mem::size_of::<u32>() + source.id.len() + mem::size_of::<u64>()) // + sum(id_len(4) + id + source_len(8))
+	let header_size = mem::size_of::<u32>() * 2 + source_groups.iter() //                          source_groups_len(4) + flags(4)
+		.map(|(source, _, _)| mem::size_of::<u32>() * 2 + mem::size_of::<u64>() + source.id.len()) // + sum(id_len(4) + flags(4) + source_len(8) + id)
 		.sum::<usize>();
 	
 	let skip_buffer = vec![0; header_size];
@@ -109,11 +110,17 @@ fn pack_group(
 	let mut encoder = XzEncoder::new(encrypter, compression_level);
 	let mut prev_position = 0;
 	for (source, entries, source_size) in &mut source_groups {
+		let prefix = if source.is_file {
+			source.path.parent().expect("absolute path to a file should have a parent")
+		} else {
+			&*source.path
+		};
+		
 		let mut tar_builder = tar::Builder::new(encoder);
 		
 		for entry in entries.iter() {
 			tar_builder.append_file(
-				entry.path.strip_prefix(&source.path).expect("all entries should be located below the source path"),
+				entry.path.strip_prefix(prefix).expect("all entries should be located below the source path"),
 				&mut File::open(&entry.path)?
 			)?;
 			
@@ -150,6 +157,14 @@ fn pack_group(
 		encrypter.write_all(&id_len.to_le_bytes())?;
 		encrypter.write_all(source.id.as_bytes())?;
 		encrypter.write_all(&source_size.to_le_bytes())?;
+		
+		let mut flags = 0u32;
+		
+		if source.is_file {
+			flags |= 1;
+		}
+		
+		encrypter.write_all(&flags.to_le_bytes())?;
 	}
 	
 	Ok(())

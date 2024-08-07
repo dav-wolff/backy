@@ -21,6 +21,7 @@ const BKY_HEADER: &[u8] = b"backy archive v1\n";
 #[derive(Clone, Debug)]
 struct Source {
 	id: Arc<str>,
+	is_file: bool,
 	path: Arc<Path>,
 }
 

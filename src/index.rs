@@ -12,6 +12,15 @@ pub fn create_index(sources: Vec<Source>) -> Result<(Vec<Entry>, u64), io::Error
 	let mut prev_index_len = 0;
 	
 	for source in sources {
+		if source.is_file {
+			index.push(Entry {
+				path: source.path.to_path_buf(),
+				size: source.path.metadata()?.len(),
+				source,
+			});
+			continue;
+		}
+		
 		println!("Indexing files in {}...", source.path.to_string_lossy());
 		
 		let mut source_size = 0;

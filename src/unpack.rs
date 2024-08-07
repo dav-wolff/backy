@@ -63,7 +63,7 @@ fn unpack_group(group: PathBuf, out: &Path, key: Key, progress_tracker: Progress
 	decrypter.read_exact(&mut buf32)?;
 	let groups_len = u32::from_le_bytes(buf32);
 	
-	let mut source_groups: Vec<(String, u64)> = Vec::with_capacity(groups_len as usize);
+	let mut source_groups = Vec::with_capacity(groups_len as usize);
 	
 	// header
 	for _ in 0..groups_len {
@@ -76,7 +76,10 @@ fn unpack_group(group: PathBuf, out: &Path, key: Key, progress_tracker: Progress
 		decrypter.read_exact(&mut buf64)?;
 		let source_size = u64::from_le_bytes(buf64);
 		
-		source_groups.push((source_id, source_size));
+		decrypter.read_exact(&mut buf32)?;
+		let flags = u32::from_le_bytes(buf32);
+		
+		source_groups.push((source_id, source_size, flags));
 	}
 	
 	progress_tracker.advance((&file).stream_position()?);
@@ -84,8 +87,10 @@ fn unpack_group(group: PathBuf, out: &Path, key: Key, progress_tracker: Progress
 	// tar archive
 	let mut decoder = XzDecoder::new(decrypter);
 	let mut prev_position = 0;
-	for (source_id, source_size) in source_groups {
-		let directory = if is_single_source {
+	for (source_id, source_size, flags) in source_groups {
+		let is_file = flags & 1 != 0;
+		
+		let directory = if is_single_source || is_file {
 			Cow::Borrowed(out)
 		} else {
 			Cow::Owned(out.join(source_id))

@@ -42,14 +42,13 @@ impl<W: Write> Write for EncryptWriter<W> {
 		let out_buf = &mut self.buffer[..in_buf.len()];
 		
 		// TODO handle error
-		self.cipher.apply_keystream_b2b(&in_buf, out_buf).unwrap();
+		self.cipher.apply_keystream_b2b(in_buf, out_buf).unwrap();
 		self.inner.write_all(out_buf)?;
 		Ok(in_buf.len())
 	}
 	
 	fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-		#[allow(clippy::unused_io_amount)]
-		self.write(buf)?;
+		let _ = self.write(buf)?;
 		Ok(())
 	}
 	
