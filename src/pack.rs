@@ -6,19 +6,25 @@ use xz2::write::XzEncoder;
 use crate::{crypto::{generate_iv, EncryptWriter, Key, IV}, group::create_groups, index::create_index, progress::{ProgressDisplay, ProgressTracker}, Entry, Source, BKY_HEADER};
 
 pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Option<u64>, compression_level: u32) -> Result<(), io::Error> {
+	if sources.is_empty() {
+		panic!("at least one source must be provided");
+	}
+	
 	if compression_level > 9 {
 		panic!("compression_level must be a number between 0 and 9");
 	}
 	
 	// TODO: get rid of unwraps
 	// TODO: create separate ids for folders with same name
-	let sources = sources.into_iter()
+	let sources: Vec<_> = sources.into_iter()
 		.map(|path| path.canonicalize().unwrap())
 		.map(|path| Source {
 			id: path.file_name().unwrap().to_string_lossy().into(),
 			path: path.into(),
 		})
 		.collect();
+	
+	let is_single_source = sources.len() == 1;
 	
 	let (index, total_size) = create_index(sources)?;
 	
@@ -35,20 +41,41 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Optio
 			.map(|(i, group)| -> Result<_, io::Error> {
 				let i = i + 1;
 				let path = out.join(format!("{i}.bky"));
-				pack_group(&path, group.entries, key, compression_level, progress_display.new_tracker(path.to_string_lossy().into_owned(), group.size))?;
+				pack_group(
+					&path,
+					group.entries,
+					key,
+					compression_level,
+					is_single_source,
+					progress_display.new_tracker(path.to_string_lossy().into_owned(), group.size)
+				)?;
 				
 				Ok(())
 			})
 			.collect::<Result<(), _>>()?;
 	} else {
 		let progress_display = ProgressDisplay::new(total_size);
-		pack_group(&out, index, key, compression_level, progress_display.new_tracker("Total", total_size))?;
+		pack_group(
+			&out,
+			index,
+			key,
+			compression_level,
+			is_single_source,
+			progress_display.new_tracker("Total", total_size)
+		)?;
 	}
 	
 	Ok(())
 }
 
-fn pack_group(out: &Path, entries: Vec<Entry>, key: Key, compression_level: u32, progress_tracker: ProgressTracker) -> Result<(), io::Error> {
+fn pack_group(
+	out: &Path,
+	entries: Vec<Entry>,
+	key: Key,
+	compression_level: u32,
+	is_single_source: bool,
+	progress_tracker: ProgressTracker
+) -> Result<(), io::Error> {
 	let mut file = File::create_new(out)?;
 	
 	file.write_all(BKY_HEADER)?;
@@ -71,7 +98,7 @@ fn pack_group(out: &Path, entries: Vec<Entry>, key: Key, compression_level: u32,
 	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
 	
 	// skip header
-	let header_size = mem::size_of::<u32>() + source_groups.iter() //                             source_groups_len(4)
+	let header_size = mem::size_of::<u32>() * 2 + source_groups.iter() //                         source_groups_len(4) + flags(4)
 		.map(|(source, _, _)| mem::size_of::<u32>() + source.id.len() + mem::size_of::<u64>()) // + sum(id_len(4) + id + source_len(8))
 		.sum::<usize>();
 	
@@ -106,7 +133,15 @@ fn pack_group(out: &Path, entries: Vec<Entry>, key: Key, compression_level: u32,
 	// reset encrypter
 	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
 	
-	// header
+	let mut flags = 0u32;
+	
+	if is_single_source {
+		flags |= 1;
+	}
+	
+	encrypter.write_all(&flags.to_le_bytes())?;
+	
+	// groups header
 	let groups_len: u32 = source_groups.len() as u32;
 	encrypter.write_all(&groups_len.to_le_bytes())?;
 	

@@ -1,4 +1,4 @@
-use std::{fs::{self, DirEntry, File}, io::{self, Read, Seek}, mem, path::{Path, PathBuf}};
+use std::{borrow::Cow, fs::{self, DirEntry, File}, io::{self, Read, Seek}, mem, path::{Path, PathBuf}};
 
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use xz2::read::XzDecoder;
@@ -57,6 +57,10 @@ fn unpack_group(group: PathBuf, out: &Path, key: Key, progress_tracker: Progress
 	let mut buf64 = [0u8; mem::size_of::<u64>()];
 	
 	decrypter.read_exact(&mut buf32)?;
+	let flags = u32::from_le_bytes(buf32);
+	let is_single_source = flags & 1 != 0;
+	
+	decrypter.read_exact(&mut buf32)?;
 	let groups_len = u32::from_le_bytes(buf32);
 	
 	let mut source_groups: Vec<(String, u64)> = Vec::with_capacity(groups_len as usize);
@@ -81,7 +85,12 @@ fn unpack_group(group: PathBuf, out: &Path, key: Key, progress_tracker: Progress
 	let mut decoder = XzDecoder::new(decrypter);
 	let mut prev_position = 0;
 	for (source_id, source_size) in source_groups {
-		let directory = out.join(source_id);
+		let directory = if is_single_source {
+			Cow::Borrowed(out)
+		} else {
+			Cow::Owned(out.join(source_id))
+		};
+		
 		fs::create_dir_all(&directory)?;
 		
 		let read = (&mut decoder).take(source_size);

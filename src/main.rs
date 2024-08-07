@@ -66,7 +66,7 @@ struct UnpackArgs {
 	/// The backy archive to unpack (can be a file or directory)
 	archive: PathBuf,
 	/// Directory to unpack the sources into
-	#[arg(short, long, default_value = "backy")]
+	#[arg(short, long, default_value = ".")]
 	out: PathBuf,
 	/// Key to use for decryption
 	#[arg(short, long, conflicts_with = "key_file")]
