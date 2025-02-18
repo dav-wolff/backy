@@ -99,8 +99,8 @@ fn pack_group(
 	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
 	
 	// skip header
-	let header_size = mem::size_of::<u32>() * 2 + source_groups.iter() //                          source_groups_len(4) + flags(4)
-		.map(|(source, _, _)| mem::size_of::<u32>() * 2 + mem::size_of::<u64>() + source.id.len()) // + sum(id_len(4) + flags(4) + source_len(8) + id)
+	let header_size = size_of::<u32>() * 2 + source_groups.iter() //                          source_groups_len(4) + flags(4)
+		.map(|(source, _, _)| size_of::<u32>() * 2 + size_of::<u64>() + source.id.len()) // + sum(id_len(4) + flags(4) + source_len(8) + id)
 		.sum::<usize>();
 	
 	let skip_buffer = vec![0; header_size];
@@ -136,7 +136,7 @@ fn pack_group(
 	mem::drop(encoder);
 	
 	// reset file
-	file.seek(io::SeekFrom::Start((BKY_HEADER.len() + mem::size_of::<IV>()) as u64))?;
+	file.seek(io::SeekFrom::Start((BKY_HEADER.len() + size_of::<IV>()) as u64))?;
 	// reset encrypter
 	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
 	

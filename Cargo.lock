@@ -54,11 +54,12 @@ dependencies = [
 
 [[package]]
 name = "backy"
-version = "0.1.0"
+version = "0.1.1-wip"
 dependencies = [
  "base64",
  "chacha20",
  "clap",
+ "either",
  "getrandom",
  "humansize",
  "indicatif",

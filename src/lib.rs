@@ -13,8 +13,8 @@ pub use crypto::{generate_key, Key};
 mod pack;
 pub use pack::pack;
 
-mod unpack;
-pub use unpack::unpack;
+mod archive;
+pub use archive::Archive;
 
 const BKY_HEADER: &[u8] = b"backy archive v1\n";
 

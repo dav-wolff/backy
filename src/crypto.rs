@@ -78,4 +78,10 @@ impl<R: Read> Read for DecryptReader<R> {
 		self.cipher.apply_keystream(&mut buf[..bytes_read]);
 		Ok(bytes_read)
 	}
+	
+	fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+		self.inner.read_exact(buf)?;
+		self.cipher.apply_keystream(buf);
+		Ok(())
+	}
 }

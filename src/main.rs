@@ -37,6 +37,8 @@ enum Commands {
 	Pack(PackArgs),
 	/// Unpacks a backy archive into its sources
 	Unpack(UnpackArgs),
+	/// Lists the sources a backy archive contains
+	ListSources(ListSourcesArgs),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -76,9 +78,20 @@ struct UnpackArgs {
 	key_file: Option<PathBuf>,
 }
 
+#[derive(Args, Clone, Debug)]
+struct ListSourcesArgs {
+	/// The backy archive to unpack (can be a file or directory)
+	archive: PathBuf,
+	/// Key to use for decryption
+	#[arg(short, long, conflicts_with = "key_file")]
+	key: Option<String>,
+	/// File containing the key to use for decryption
+	#[arg(short = 'f', long, conflicts_with = "key")]
+	key_file: Option<PathBuf>,
+}
+
 fn main() {
 	let args = BackyArgs::parse();
-	
 	
 	match args.command {
 		Commands::GenerateKey => {
@@ -92,12 +105,19 @@ fn main() {
 		},
 		Commands::Unpack(unpack_args) => {
 			let key = get_key(unpack_args.key, unpack_args.key_file);
-			backy::unpack(unpack_args.archive, unpack_args.out, key).unwrap();
+			backy::Archive::new(unpack_args.archive, key).unpack(unpack_args.out).unwrap();
 		},
+		Commands::ListSources(list_sources_args) => {
+			let key = get_key(list_sources_args.key, list_sources_args.key_file);
+			let archive = backy::Archive::new(list_sources_args.archive, key);
+			for source in archive.sources().unwrap() {
+				println!("{source}");
+			}
+		}
 	}
 }
 
-fn get_key (key_string: Option<String>, key_file: Option<PathBuf>) -> Key {
+fn get_key(key_string: Option<String>, key_file: Option<PathBuf>) -> Key {
 	// TODO: handle errors
 	let base64_key = match (key_string, key_file) {
 		(Some(_), Some(_)) => unreachable!("clap ensures key and key_file are mutually exclusive"),
