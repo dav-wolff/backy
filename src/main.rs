@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 #![deny(non_snake_case)]
 
-use std::{fs, path::PathBuf};
+use std::{fs, io::Write, os::unix::ffi::OsStrExt, path::PathBuf};
 
 use backy::Key;
 use base64::{prelude::BASE64_STANDARD, Engine};
@@ -37,8 +37,10 @@ enum Commands {
 	Pack(PackArgs),
 	/// Unpacks a backy archive into its sources
 	Unpack(UnpackArgs),
-	/// Lists the sources a backy archive contains
+	/// Lists all sources contained in a backy archive
 	ListSources(ListSourcesArgs),
+	/// Lists all files contained in a backy archive
+	List(ListArgs),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -46,10 +48,10 @@ struct PackArgs {
 	/// All directories / files to include in the backup
 	#[arg(required = true)]
 	sources: Vec<PathBuf>,
-	/// File to write backup data to, or directory to write files to if --size is specified, defaults to GiB if no unit is given
+	/// File to write backup data to, or directory to write files to if --size is specified
 	#[arg(short, long, default_value = "backup.bky")]
 	out: PathBuf,
-	/// Maximum size of files in the out directory
+	/// Maximum size of files in the out directory, defaults to GiB if no unit is given
 	#[arg(short, long, value_parser = parse_size)]
 	size: Option<u64>,
 	/// Level of compression to use
@@ -80,8 +82,23 @@ struct UnpackArgs {
 
 #[derive(Args, Clone, Debug)]
 struct ListSourcesArgs {
-	/// The backy archive to unpack (can be a file or directory)
+	/// The backy archive to list sources of (can be a file or directory)
 	archive: PathBuf,
+	/// Key to use for decryption
+	#[arg(short, long, conflicts_with = "key_file")]
+	key: Option<String>,
+	/// File containing the key to use for decryption
+	#[arg(short = 'f', long, conflicts_with = "key")]
+	key_file: Option<PathBuf>,
+}
+
+#[derive(Args, Clone, Debug)]
+struct ListArgs {
+	/// The backy archive to list files of (can be a file or directory)
+	archive: PathBuf,
+	/// The source containing the files to be listed
+	#[arg(short, long)]
+	source: Option<String>,
 	/// Key to use for decryption
 	#[arg(short, long, conflicts_with = "key_file")]
 	key: Option<String>,
@@ -113,7 +130,29 @@ fn main() {
 			for source in archive.sources().unwrap() {
 				println!("{source}");
 			}
-		}
+		},
+		Commands::List(list_args) => {
+			let key = get_key(list_args.key, list_args.key_file);
+			let archive = backy::Archive::new(list_args.archive, key);
+			
+			if let Some(source) = &list_args.source {
+				if !archive.sources().unwrap().contains(source) {
+					panic!("source {source} is not contained in this archive");
+				}
+			}
+			
+			let mut stdout = std::io::stdout();
+			let mut writer = stdout.lock();
+			archive.for_each_file(|source, file| {
+				if list_args.source.as_ref().is_some_and(|expected| source != expected) {
+					return;
+				}
+				
+				writer.write_all(file.as_os_str().as_bytes()).unwrap();
+				writer.write_all(b"\n").unwrap();
+			}).unwrap();
+			stdout.flush().unwrap();
+		},
 	}
 }
 

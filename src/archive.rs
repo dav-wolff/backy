@@ -103,4 +103,35 @@ impl Archive {
 				.collect())
 		}
 	}
+	
+	pub fn for_each_file(&self, mut callback: impl FnMut(&str, &Path)) -> Result<(), io::Error> {
+		let mut handle_group = |group: &Path| -> Result<(), io::Error> {
+			let file = File::open(group)?;
+			let sub_archive = SubArchive::new(file, self.key)?;
+			sub_archive.for_each_tar(|source_group, tar| {
+				let iter = tar.entries()?
+					.map(|entry| entry.map(|entry| {
+						entry.path().unwrap().into_owned()
+					}));
+				
+				for entry in iter {
+					callback(&source_group.id, &entry?);
+				}
+				
+				Ok(())
+			})?;
+			
+			Ok(())
+		};
+		
+		if self.path.is_dir() {
+			for entry in fs::read_dir(&self.path)? {
+				handle_group(&entry?.path())?;
+			}
+		} else {
+			handle_group(&self.path)?;
+		}
+		
+		Ok(())
+	}
 }

@@ -55,7 +55,7 @@ pub struct ProgressTracker<'a> {
 	total_progress: u64,
 }
 
-impl<'a> ProgressTracker<'a> {
+impl ProgressTracker<'_> {
 	pub fn advance(&self, amount: u64) {
 		self.display.total_progress.inc(amount);
 		self.progress.inc(amount);
