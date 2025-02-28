@@ -2,7 +2,7 @@
 name = "backy"
 description = "Command-line file backup tool"
 authors = ["David Wolff"]
-version = "0.1.1-wip"
+version = "0.1.1"
 edition = "2021"
 
 [dependencies]

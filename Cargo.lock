@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "backy"
-version = "0.1.1-wip"
+version = "0.1.1"
 dependencies = [
  "base64",
  "chacha20",
