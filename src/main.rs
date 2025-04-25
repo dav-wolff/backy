@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 #![deny(non_snake_case)]
 
-use std::{fs, io::{self, Write}, os::unix::ffi::OsStrExt, path::PathBuf};
+use std::{fs, io::{self, Write}, path::PathBuf};
 
 use backy::Key;
 use base64::{prelude::BASE64_STANDARD, Engine};
@@ -12,14 +12,6 @@ fn parse_size(arg: &str) -> Result<u64, parse_size::Error> {
 		.with_binary()
 		.with_default_factor(1024 * 1024 * 1024)
 		.parse_size(arg)
-}
-
-fn parse_compression_level(arg: &str) -> Result<u32, String> {
-	let level: i32 = arg.parse().map_err(|err| format!("{err}"))?;
-	match level {
-		0..=9 => Ok(level as u32),
-		_ => Err("compression-level must be a number from 0 to 9".to_owned()),
-	}
 }
 
 #[derive(Parser, Debug)]
@@ -56,9 +48,10 @@ struct PackArgs {
 	/// Maximum size of files in the out directory, defaults to GiB if no unit is given
 	#[arg(short, long, value_parser = parse_size)]
 	size: Option<u64>,
-	/// Level of compression to use
-	#[arg(short = 'l', long, value_parser = parse_compression_level, default_value = "9")]
-	compression_level: u32,
+	// TODO: add compression again?
+	// /// Level of compression to use
+	// #[arg(short = 'l', long, value_parser = parse_compression_level, default_value = "9")]
+	// compression_level: u32,
 	/// Key to use for encryption
 	#[arg(short, long, conflicts_with = "key_file")]
 	key: Option<String>,
@@ -137,47 +130,51 @@ fn main() {
 		},
 		Commands::Pack(pack_args) => {
 			let key = get_key(pack_args.key, pack_args.key_file);
-			backy::pack(pack_args.sources, pack_args.out, key, pack_args.size, pack_args.compression_level).unwrap();
+			// TODO handle file already exists
+			backy::pack(pack_args.sources, pack_args.out, key, pack_args.size).unwrap();
 		},
 		Commands::Unpack(unpack_args) => {
 			let key = get_key(unpack_args.key, unpack_args.key_file);
-			backy::Archive::new(unpack_args.archive, key).unpack(unpack_args.out).unwrap();
+			backy::Archive::new(unpack_args.archive, key).unwrap()
+				.unpack(unpack_args.out).unwrap();
 		},
 		Commands::ListSources(list_sources_args) => {
 			let key = get_key(list_sources_args.key, list_sources_args.key_file);
-			let archive = backy::Archive::new(list_sources_args.archive, key);
-			for source in archive.sources().unwrap() {
+			let archive = backy::Archive::new(list_sources_args.archive, key).unwrap();
+			for source in archive.sources() {
 				println!("{source}");
 			}
 		},
 		Commands::List(list_args) => {
 			let key = get_key(list_args.key, list_args.key_file);
-			let archive = backy::Archive::new(list_args.archive, key);
+			let archive = backy::Archive::new(list_args.archive, key).unwrap();
 			
 			if let Some(source) = &list_args.source {
-				if !archive.sources().unwrap().contains(source) {
+				if !archive.sources().any(|s| s == source) {
 					panic!("source {source} is not contained in this archive");
 				}
 			}
 			
+			if list_args.source.is_some() {
+				todo!("filter paths by source");
+			}
+			
 			let mut stdout = std::io::stdout();
 			let mut writer = stdout.lock();
-			archive.for_each_file(|source, file| {
-				if list_args.source.as_ref().is_some_and(|expected| source != expected) {
-					return;
-				}
-				
-				writer.write_all(file.as_os_str().as_bytes()).unwrap();
+			for path in archive.file_paths() {
+				// TODO: include source in output?
+				writer.write_all(path.as_bytes()).unwrap();
 				writer.write_all(b"\n").unwrap();
-			}).unwrap();
+			}
 			stdout.flush().unwrap();
 		},
 		Commands::Get(get_args) => {
 			let key = get_key(get_args.key, get_args.key_file);
-			let archive = backy::Archive::new(get_args.archive, key);
+			let mut archive = backy::Archive::new(get_args.archive, key).unwrap();
 			
-			let stdout = io::stdout().lock();
-			archive.get_file(get_args.source.as_ref().map(AsRef::as_ref), &get_args.path, stdout).unwrap();
+			let mut stdout = io::stdout().lock();
+			let mut reader = archive.get_file(get_args.source.as_ref().map(AsRef::as_ref), &get_args.path).unwrap().unwrap();
+			io::copy(&mut reader, &mut stdout).unwrap();
 		},
 	}
 }

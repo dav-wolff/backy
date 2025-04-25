@@ -2,11 +2,12 @@
 name = "backy"
 description = "Command-line file backup tool"
 authors = ["David Wolff"]
-version = "0.1.2"
+version = "0.2.0-wip"
 edition = "2024"
 
 [dependencies]
 base64 = "0.22"
+blake3 = "1.8"
 chacha20 = { version = "0.9", features = ["std"] }
 clap = { version = "4.5", features = ["derive"] }
 either = "1.13"
@@ -16,6 +17,4 @@ indicatif = "0.17"
 parse-size = { version = "1.0", features = ["std"] }
 rayon = "1.10"
 rpassword = "7.3"
-tar = "0.4"
 walkdir = "2.5"
-xz2 = "0.1"

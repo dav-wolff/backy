@@ -1,110 +1,83 @@
-use std::{io::{self, Read}, ops::ControlFlow};
+use std::{borrow::Borrow, io::{self, Read, Seek, SeekFrom}};
 
-use xz2::read::XzDecoder;
+use crate::{crypto::{DecryptReader, IV}, header::Header, index::EntryPath, Key, BKY_HEADER};
 
-use crate::{crypto::{DecryptReader, IV}, Key, BKY_HEADER};
-
-pub struct SubArchive<R: Read> {
+pub struct SubArchive<R: Read + Seek> {
 	decrypter: DecryptReader<R>,
-	source_groups: Vec<SourceGroup>,
-	is_single_source: bool,
+	contents_start: u64,
+	header: Header,
 }
 
-pub struct SourceGroup {
-	pub id: String,
-	pub size: u64,
-	pub flags: u32,
-}
-
-impl<R: Read> SubArchive<R> {
+impl<R: Read + Seek> SubArchive<R> {
 	pub fn new(mut reader: R, key: Key) -> Result<Self, io::Error> {
-		let mut header = [0u8; BKY_HEADER.len()];
-		reader.read_exact(&mut header)?;
+		let mut bky_header = [0u8; BKY_HEADER.len()];
+		reader.read_exact(&mut bky_header)?;
 		
-		if header != BKY_HEADER {
+		if bky_header != BKY_HEADER {
 			panic!("Not a backy archive");
 		}
 		
 		let mut iv = IV::default();
 		reader.read_exact(&mut iv)?;
-		let mut decrypter = DecryptReader::new(reader, key, iv);
+		let mut decrypter = DecryptReader::new(reader, key, iv)?;
 		
-		let mut buf32 = [0u8; size_of::<u32>()];
-		let mut buf64 = [0u8; size_of::<u64>()];
-		
-		decrypter.read_exact(&mut buf32)?;
-		let flags = u32::from_le_bytes(buf32);
-		let is_single_source = flags & 1 != 0;
-		
-		decrypter.read_exact(&mut buf32)?;
-		let groups_len = u32::from_le_bytes(buf32);
-		
-		let mut source_groups = Vec::with_capacity(groups_len as usize);
-		
-		// header
-		for _ in 0..groups_len {
-			decrypter.read_exact(&mut buf32)?;
-			let id_len = u32::from_le_bytes(buf32);
-			let mut id_buf = vec![0; id_len as usize];
-			decrypter.read_exact(&mut id_buf[..])?;
-			let id = String::from_utf8(id_buf).unwrap(); // TODO: return custom error
-			
-			decrypter.read_exact(&mut buf64)?;
-			let size = u64::from_le_bytes(buf64);
-			
-			decrypter.read_exact(&mut buf32)?;
-			let flags = u32::from_le_bytes(buf32);
-			
-			source_groups.push(SourceGroup {
-				id,
-				size,
-				flags,
-			});
-		}
+		let header = Header::read_from(&mut decrypter)?;
+		let contents_start = decrypter.stream_position()?;
 		
 		Ok(Self {
 			decrypter,
-			source_groups,
-			is_single_source,
+			contents_start,
+			header,
 		})
 	}
 	
 	pub fn is_single_source(&self) -> bool {
-		self.is_single_source
+		self.header.flags().is_single_source
+	}
+	
+	pub fn contents_start(&self) -> u64 {
+		self.contents_start
 	}
 	
 	pub fn sources(&self) -> impl Iterator<Item = &str> {
-		self.source_groups.iter().map(|source_group| source_group.id.as_str())
+		self.header.entries()
+			.keys()
+			.map(Borrow::borrow)
 	}
 	
-	pub fn for_each_tar<F>(self, mut callback: F) -> Result<(), io::Error>
+	pub fn file_paths(&self) -> impl Iterator<Item = &str> {
+		self.header.entries()
+			.values()
+			.flatten()
+			.map(|entry| entry.path.as_str())
+	}
+	
+	pub fn read_file<'s>(&'s mut self, source: &str, path: &EntryPath) -> Option<io::Result<impl Read + use<'s, R>>> {
+		let entry = self.header.entries()
+			.get(source)?
+			.iter()
+			.find(|entry| &entry.path == path)?;
+		
+		if let Err(err) = self.decrypter.seek(SeekFrom::Start(self.contents_start + entry.position)) {
+			return Some(Err(err));
+		}
+		
+		Some(Ok((&mut self.decrypter).take(entry.size)))
+	}
+	
+	pub fn for_each_file<F>(&mut self, mut callback: F) -> Result<(), io::Error>
 	where
-		F: FnMut(&SourceGroup, &mut tar::Archive<io::Take<&mut XzDecoder<DecryptReader<R>>>>) -> Result<ControlFlow<()>, io::Error>,
+		F: FnMut(&str, &EntryPath, u64, io::Take<&mut DecryptReader<R>>) -> io::Result<()>,
 	{
-		let mut decoder = XzDecoder::new(self.decrypter);
-		for source_group in self.source_groups {
-			let read = (&mut decoder).take(source_group.size);
-			let mut archive = tar::Archive::new(read);
-			
-			if callback(&source_group, &mut archive)?.is_break() {
-				break;
-			};
-			
-			read_to_end(archive.into_inner())?;
+		self.decrypter.seek(SeekFrom::Start(self.contents_start))?;
+		
+		for (source, entries) in self.header.entries() {
+			for entry in entries {
+				let reader = (&mut self.decrypter).take(entry.size);
+				callback(source, &entry.path, entry.size, reader)?;
+			}
 		}
 		
 		Ok(())
-	}
-}
-
-fn read_to_end(mut read: impl Read) -> Result<(), io::Error> {
-	let mut buf = [0u8; 1024];
-	
-	loop {
-		match read.read(&mut buf) {
-			Ok(0) => return Ok(()),
-			Ok(_) => (),
-			Err(err) => return Err(err),
-		}
 	}
 }

@@ -1,17 +1,17 @@
-use std::{fs::{self, File}, io::{self, Seek, Write}, mem, path::{Path, PathBuf}};
+use std::{collections::BTreeMap, fs::{self, File}, io::{self, Seek, Write}, path::{Path, PathBuf}};
 
+use hashing_reader::HashingReader;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
-use xz2::write::XzEncoder;
 
-use crate::{crypto::{generate_iv, EncryptWriter, Key, IV}, group::create_groups, index::create_index, progress::{ProgressDisplay, ProgressTracker}, Entry, Source, BKY_HEADER};
+use crate::{crypto::{generate_iv, EncryptWriter, Key, IV}, header::{Flags, HeaderBuilder}, index::{Contents, Entries, Entry, EntryPath, Index, Sources}, progress::{ProgressDisplay, ProgressTracker}, Source, BKY_HEADER};
 
-pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Option<u64>, compression_level: u32) -> Result<(), io::Error> {
+mod hashing_reader;
+
+pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Option<u64>) -> Result<(), io::Error> {
+	// TODO: delete generated files when an error occurs?
+	
 	if sources.is_empty() {
 		panic!("at least one source must be provided");
-	}
-	
-	if compression_level > 9 {
-		panic!("compression_level must be a number between 0 and 9");
 	}
 	
 	// TODO: get rid of unwraps
@@ -27,43 +27,42 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Optio
 	
 	let is_single_source = sources.len() == 1;
 	
-	let (index, total_size) = create_index(sources)?;
+	let index = Index::from_sources(sources, max_group_size)?;
 	
-	if let Some(max_group_size) = max_group_size {
-		if !out.exists() {
-			fs::create_dir(&out)?;
-		}
-		
-		let groups = create_groups(index, max_group_size);
-		let progress_display = ProgressDisplay::new(total_size);
-		
-		groups.into_par_iter()
-			.enumerate()
-			.map(|(i, group)| -> Result<_, io::Error> {
-				let i = i + 1;
-				let path = out.join(format!("{i}.bky"));
-				pack_group(
-					&path,
-					group.entries,
-					key,
-					compression_level,
-					is_single_source,
-					progress_display.new_tracker(path.to_string_lossy().into_owned(), group.size)
-				)?;
-				
-				Ok(())
-			})
-			.collect::<Result<(), _>>()?;
-	} else {
-		let progress_display = ProgressDisplay::new(total_size);
-		pack_group(
-			&out,
-			index,
-			key,
-			compression_level,
-			is_single_source,
-			progress_display.new_tracker("Total", total_size)
-		)?;
+	let progress_display = ProgressDisplay::new(index.total_size());
+	
+	match index.entries() {
+		Contents::Grouped(groups) => {
+			if !out.exists() {
+				fs::create_dir(&out)?;
+			}
+			
+			groups.into_par_iter()
+				.enumerate()
+				.map(|(i, group)| -> Result<_, io::Error> {
+					let i = i + 1;
+					let path = out.join(format!("{i}.bky"));
+					pack_group(
+						&path,
+						&group.sources,
+						key,
+						is_single_source,
+						progress_display.new_tracker(path.to_string_lossy().into_owned(), group.size)
+					)?;
+					
+					Ok(())
+				})
+				.collect::<Result<(), _>>()?;
+		},
+		Contents::Simple(entries) => {
+			pack_group(
+				&out,
+				entries,
+				key,
+				is_single_source,
+				progress_display.new_tracker("Total", index.total_size())
+			)?;
+		},
 	}
 	
 	Ok(())
@@ -71,9 +70,8 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Optio
 
 fn pack_group(
 	out: &Path,
-	entries: Vec<Entry>,
+	sources: &Sources,
 	key: Key,
-	compression_level: u32,
 	is_single_source: bool,
 	progress_tracker: ProgressTracker
 ) -> Result<(), io::Error> {
@@ -81,91 +79,62 @@ fn pack_group(
 	
 	file.write_all(BKY_HEADER)?;
 	
-	let mut source_groups: Vec<(Source, Vec<Entry>, u64)> = Vec::new();
-	
-	for entry in entries {
-		match source_groups.iter_mut().find(|(source, _, _)| source.id == entry.source.id) {
-			Some((_, source_entries, _)) => {
-				source_entries.push(entry);
-			},
-			None => {
-				source_groups.push((entry.source.clone(), vec![entry], 0));
-			},
-		}
-	}
-	
 	let iv = generate_iv();
 	file.write_all(&iv)?;
 	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
 	
-	// skip header
-	let header_size = size_of::<u32>() * 2 + source_groups.iter() //                          source_groups_len(4) + flags(4)
-		.map(|(source, _, _)| size_of::<u32>() * 2 + size_of::<u64>() + source.id.len()) // + sum(id_len(4) + flags(4) + source_len(8) + id)
-		.sum::<usize>();
+	let mut header = HeaderBuilder::new(sources, Flags {
+		is_single_source,
+	});
 	
-	let skip_buffer = vec![0; header_size];
+	// skip header
+	let header_size = header.header_size();
+	
+	// TODO: use random data
+	let skip_buffer = vec![0; header_size.try_into().expect("header size too large")];
 	encrypter.write_all(&skip_buffer)?;
 	
-	// tar archives
-	let mut encoder = XzEncoder::new(encrypter, compression_level);
-	let mut prev_position = 0;
-	for (source, entries, source_size) in &mut source_groups {
-		let prefix = if source.is_file {
-			source.path.parent().expect("absolute path to a file should have a parent")
-		} else {
-			&*source.path
+	// write files
+	for (source, entries) in sources {
+		// FIXME: just a temporary fix to use the same order as the header
+		let entry_map: BTreeMap<EntryPath, Entry> = match entries {
+			Entries::File(entry) => {
+				let mut map = BTreeMap::new();
+				map.insert(entry.path.clone(), entry.clone());
+				map
+			},
+			Entries::Directory(entries) => entries.iter()
+				.map(|entry| (entry.path.clone(), entry.clone()))
+				.collect(),
 		};
 		
-		let mut tar_builder = tar::Builder::new(encoder);
-		
-		for entry in entries.iter() {
-			tar_builder.append_file(
-				entry.path.strip_prefix(prefix).expect("all entries should be located below the source path"),
-				&mut File::open(&entry.path)?
-			)?;
+		for entry in entry_map.values() {
+			let file = File::open(entry.path.in_source(source))?;
+			let mut hashing_reader = HashingReader::new(file);
+			let size = io::copy(&mut hashing_reader, &mut encrypter)?;
+			header.set_entry(source, &entry.path, size, hashing_reader.finalize());
 			
+			// use entry.size, as this is the expected value necessary to add up to 100%
 			progress_tracker.advance(entry.size);
+			
+			if size != entry.size {
+				let format = humansize::make_format(humansize::BINARY);
+				eprintln!(
+					"Warning: Size differs between indexing and archiving for {}.\nOriginal size: {}\nCurrent size: {}",
+					entry.path,
+					format(entry.size),
+					format(size)
+				);
+			}
 		}
-		
-		encoder = tar_builder.into_inner()?;
-		
-		*source_size = encoder.total_in() - prev_position;
-		prev_position = encoder.total_in();
 	}
-	
-	mem::drop(encoder);
 	
 	// reset file
 	file.seek(io::SeekFrom::Start((BKY_HEADER.len() + size_of::<IV>()) as u64))?;
 	// reset encrypter
 	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
 	
-	let mut flags = 0u32;
-	
-	if is_single_source {
-		flags |= 1;
-	}
-	
-	encrypter.write_all(&flags.to_le_bytes())?;
-	
-	// groups header
-	let groups_len: u32 = source_groups.len() as u32;
-	encrypter.write_all(&groups_len.to_le_bytes())?;
-	
-	for (source, _, source_size) in &source_groups {
-		let id_len: u32 = source.id.len() as u32;
-		encrypter.write_all(&id_len.to_le_bytes())?;
-		encrypter.write_all(source.id.as_bytes())?;
-		encrypter.write_all(&source_size.to_le_bytes())?;
-		
-		let mut flags = 0u32;
-		
-		if source.is_file {
-			flags |= 1;
-		}
-		
-		encrypter.write_all(&flags.to_le_bytes())?;
-	}
+	header.write_header(&mut encrypter)?;
 	
 	Ok(())
 }
