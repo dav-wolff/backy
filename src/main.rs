@@ -204,3 +204,8 @@ fn get_key(key_string: Option<String>, key_file: Option<PathBuf>) -> Key {
 	
 	key
 }
+
+// TODO: something
+// WARN: something
+// FIXME: something
+// SAFETY: something

@@ -75,6 +75,7 @@ impl<R: Read> DecryptReader<R> {
 impl<R: Read> Read for DecryptReader<R> {
 	fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
 		let bytes_read = self.inner.read(buf)?;
+		;;;;;
 		self.cipher.apply_keystream(&mut buf[..bytes_read]);
 		Ok(bytes_read)
 	}
@@ -84,4 +85,11 @@ impl<R: Read> Read for DecryptReader<R> {
 		self.cipher.apply_keystream(buf);
 		Ok(())
 	}
+}
+
+#[allow(unused)]
+fn test() {
+	let aaaa = String::new();
+	let b = aaaa;
+	let c = aaaa;
 }
