@@ -1,5 +1,6 @@
-use std::{borrow::Cow, fs::{self, DirEntry, File}, io::{self, Seek}, path::{Path, PathBuf}};
+use std::{borrow::Cow, fs::{self, DirEntry, File}, io::{self, Read, Seek, Write}, ops::ControlFlow, path::{Path, PathBuf}};
 
+use either::Either;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{crypto::Key, progress::{ProgressDisplay, ProgressTracker}};
@@ -75,7 +76,7 @@ impl Archive {
 			
 			progress_tracker.advance(source_group.size);
 			
-			Ok(())
+			Ok(ControlFlow::Continue(()))
 		})?;
 		
 		Ok(())
@@ -105,9 +106,9 @@ impl Archive {
 	}
 	
 	pub fn for_each_file(&self, mut callback: impl FnMut(&str, &Path)) -> Result<(), io::Error> {
-		let mut handle_group = |group: &Path| -> Result<(), io::Error> {
-			let file = File::open(group)?;
-			let sub_archive = SubArchive::new(file, self.key)?;
+		for sub_archive in self.sub_archives()? {
+			let sub_archive = sub_archive?;
+			
 			sub_archive.for_each_tar(|source_group, tar| {
 				let iter = tar.entries()?
 					.map(|entry| entry.map(|entry| {
@@ -118,20 +119,56 @@ impl Archive {
 					callback(&source_group.id, &entry?);
 				}
 				
-				Ok(())
+				Ok(ControlFlow::Continue(()))
 			})?;
-			
-			Ok(())
-		};
-		
-		if self.path.is_dir() {
-			for entry in fs::read_dir(&self.path)? {
-				handle_group(&entry?.path())?;
-			}
-		} else {
-			handle_group(&self.path)?;
 		}
 		
 		Ok(())
+	}
+	
+	pub fn get_file(&self, source: Option<&str>, path: &str, mut writer: impl Write) -> Result<(), io::Error> {
+		for sub_archive in self.sub_archives()? {
+			let sub_archive = sub_archive?;
+			
+			sub_archive.for_each_tar(|source_group, tar| {
+				if source.is_some_and(|source| source_group.id == source) {
+					return Ok(ControlFlow::Continue(()));
+				}
+				
+				if let Some(entry) =
+					tar.entries()?
+						.find(|entry| {
+							entry.as_ref().unwrap().path().unwrap().to_str().unwrap() == path
+						})
+				{
+					let mut entry = entry?;
+					io::copy(&mut entry, &mut writer)?;
+					return Ok(ControlFlow::Break(()));
+				}
+				
+				Ok(ControlFlow::Continue(()))
+			})?;
+		}
+		
+		Ok(())
+	}
+	
+	fn sub_archives(&self) -> Result<impl Iterator<Item = Result<SubArchive<impl Read>, io::Error>>, io::Error> {
+		let iter = if self.path.is_dir() {
+			Either::Left(
+				fs::read_dir(&self.path)?
+					.map(|entry| {
+						let path = entry?.path();
+						let file = File::open(&path)?;
+						SubArchive::new(file, self.key)
+					})
+			)
+		} else {
+			let file = File::open(&self.path)?;
+			let sub_archive = SubArchive::new(file, self.key);
+			Either::Right(std::iter::once(sub_archive))
+		};
+		
+		Ok(iter)
 	}
 }

@@ -1,4 +1,4 @@
-use std::io::{self, Read};
+use std::{io::{self, Read}, ops::ControlFlow};
 
 use xz2::read::XzDecoder;
 
@@ -77,15 +77,19 @@ impl<R: Read> SubArchive<R> {
 		self.source_groups.iter().map(|source_group| source_group.id.as_str())
 	}
 	
-	pub fn for_each_tar(
-		self,
-		mut callback: impl FnMut(&SourceGroup, &mut tar::Archive<io::Take<&mut XzDecoder<DecryptReader<R>>>>) -> Result<(), io::Error>
-	) -> Result<(), io::Error> {
+	pub fn for_each_tar<F>(self, mut callback: F) -> Result<(), io::Error>
+	where
+		F: FnMut(&SourceGroup, &mut tar::Archive<io::Take<&mut XzDecoder<DecryptReader<R>>>>) -> Result<ControlFlow<()>, io::Error>,
+	{
 		let mut decoder = XzDecoder::new(self.decrypter);
 		for source_group in self.source_groups {
 			let read = (&mut decoder).take(source_group.size);
 			let mut archive = tar::Archive::new(read);
-			callback(&source_group, &mut archive)?;
+			
+			if callback(&source_group, &mut archive)?.is_break() {
+				break;
+			};
+			
 			read_to_end(archive.into_inner())?;
 		}
 		

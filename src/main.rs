@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 #![deny(non_snake_case)]
 
-use std::{fs, io::Write, os::unix::ffi::OsStrExt, path::PathBuf};
+use std::{fs, io::{self, Write}, os::unix::ffi::OsStrExt, path::PathBuf};
 
 use backy::Key;
 use base64::{prelude::BASE64_STANDARD, Engine};
@@ -41,6 +41,8 @@ enum Commands {
 	ListSources(ListSourcesArgs),
 	/// Lists all files contained in a backy archive
 	List(ListArgs),
+	/// Extracts a single file from the backy archive
+	Get(GetArgs),
 }
 
 #[derive(Args, Clone, Debug)]
@@ -107,6 +109,23 @@ struct ListArgs {
 	key_file: Option<PathBuf>,
 }
 
+#[derive(Args, Clone, Debug)]
+struct GetArgs {
+	/// The backy archive to extract the file from (can be a file or directory)
+	archive: PathBuf,
+	/// The path of the file to extract
+	path: String,
+	/// The source to look for the file in
+	#[arg(short, long)]
+	source: Option<String>,
+	/// Key to use for decryption
+	#[arg(short, long, conflicts_with = "key_file")]
+	key: Option<String>,
+	/// File containing the key to use for decryption
+	#[arg(short = 'f', long, conflicts_with = "key")]
+	key_file: Option<PathBuf>,
+}
+
 fn main() {
 	let args = BackyArgs::parse();
 	
@@ -152,6 +171,13 @@ fn main() {
 				writer.write_all(b"\n").unwrap();
 			}).unwrap();
 			stdout.flush().unwrap();
+		},
+		Commands::Get(get_args) => {
+			let key = get_key(get_args.key, get_args.key_file);
+			let archive = backy::Archive::new(get_args.archive, key);
+			
+			let stdout = io::stdout().lock();
+			archive.get_file(get_args.source.as_ref().map(AsRef::as_ref), &get_args.path, stdout).unwrap();
 		},
 	}
 }
