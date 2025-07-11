@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, io::{self, Read, Seek, Write}};
 
 use blake3::Hash;
 
-use crate::{index::{Entries, EntryPath, Sources}, Source};
+use crate::{index::{EntryPath, Sources}, Source};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Flags {
@@ -80,6 +80,8 @@ impl<'a> HeaderBuilder<'a> {
 		let mut size = 0u64;
 		// flags
 		size += self.flags.to_bytes().len() as u64;
+		// previous subarchive count (not yet implemented)
+		size += size_of::<u32>() as u64;
 		// source count
 		size += size_of::<u32>() as u64;
 		// sources
@@ -102,12 +104,15 @@ impl<'a> HeaderBuilder<'a> {
 		size
 	}
 	
-	// NOTE: if this is updated header_size might need to be updated as well
+	// NOTE: if this is updated header_size and Header::read_from might need to be updated as well
 	pub fn write_header(&self, mut writer: impl Write + Seek) -> Result<(), io::Error> {
 		let start_position = writer.stream_position()?;
 		
 		// write: flags
 		writer.write_all(&self.flags.to_bytes())?;
+		// write: previous subarchive count (not yet implemented)
+		let prev_sub_archive_count = 0u32;
+		writer.write_all(&prev_sub_archive_count.to_le_bytes())?;
 		// write: source count
 		let source_count: u32 = self.entries.len().try_into().expect("shouldn't contain that many sources");
 		writer.write_all(&source_count.to_le_bytes())?;
@@ -157,6 +162,10 @@ impl Header {
 	pub fn read_from(mut reader: impl Read) -> Result<Self, io::Error> {
 		// read: flags
 		let flags = Flags::from_bytes(read_bytes(&mut reader)?);
+		
+		// read: previous subarchive count (not yet implemented)
+		let prev_sub_archive_count = read_u32(&mut reader)?;
+		assert_eq!(prev_sub_archive_count, 0, "incremental backups not yet implemented");
 		
 		// read: source count
 		let source_count = read_u32(&mut reader)?;
