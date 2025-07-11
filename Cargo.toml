@@ -19,3 +19,6 @@ parse-size = { version = "1.0", features = ["std"] }
 rayon = "1.10"
 rpassword = "7.3"
 walkdir = "2.5"
+
+[dev-dependencies]
+dir-diff = "0.3.3"

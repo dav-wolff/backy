@@ -1,4 +1,4 @@
-use std::{fs::{self, File}, io::{self, Read}, path::PathBuf};
+use std::{fs::{self, File}, io::{self, Read}, path::{Path, PathBuf}};
 
 use anyhow::{bail, ensure, Context};
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
@@ -59,7 +59,9 @@ impl Archive {
 		})
 	}
 	
-	pub fn unpack(&mut self, out_dir: PathBuf) -> anyhow::Result<()> {
+	pub fn unpack(&mut self, out_dir: impl AsRef<Path>) -> anyhow::Result<()> {
+		let out_dir = out_dir.as_ref();
+		
 		let total_size = self.sub_archives.iter()
 			.map(|data| data.size)
 			.sum();

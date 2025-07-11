@@ -41,6 +41,7 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Optio
 				fs::create_dir(&out).with_context(|| format!("creating out directory in {:?}", out))?;
 			}
 			
+			// TODO: fail early
 			groups.into_par_iter()
 				.enumerate()
 				.map(|(i, group)| -> anyhow::Result<_> {
