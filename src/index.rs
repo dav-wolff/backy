@@ -36,6 +36,12 @@ pub enum Entries {
 	File(Entry),
 }
 
+impl Entries {
+	pub fn len(&self) -> usize {
+		self.into_iter().len()
+	}
+}
+
 impl<'a> IntoIterator for &'a Entries {
 	type Item = &'a Entry;
 	type IntoIter = Either<std::slice::Iter<'a, Entry>, std::iter::Once<&'a Entry>>;

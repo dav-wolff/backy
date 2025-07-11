@@ -38,47 +38,42 @@ struct Value {
 }
 
 #[derive(Debug)]
-pub struct HeaderBuilder {
+pub struct HeaderBuilder<'a> {
+	sources: &'a Sources,
 	flags: Flags,
-	entries: BTreeMap<Source, BTreeMap<EntryPath, Option<Value>>>,
+	entries: BTreeMap<Source, Vec<Value>>,
 }
 
-impl HeaderBuilder {
-	pub fn new(sources: &Sources, flags: Flags) -> Self {
+impl<'a> HeaderBuilder<'a> {
+	pub fn new(sources: &'a Sources, flags: Flags) -> Self {
 		let entries = sources.iter()
 			.map(|(source, entries)| {
-				let entry_map: BTreeMap<EntryPath, Option<Value>> = match entries {
-					Entries::File(entry) => {
-						let mut map = BTreeMap::new();
-						map.insert(entry.path.clone(), None);
-						map
-					},
-					Entries::Directory(entries) => entries.iter()
-						.map(|entry| (entry.path.clone(), None))
-						.collect(),
-				};
-				
-				(source.clone(), entry_map)
+				(source.clone(), Vec::with_capacity(entries.len()))
 			})
 			.collect();
 		
 		Self {
+			sources,
 			flags,
 			entries,
 		}
 	}
 	
-	pub fn set_entry(&mut self, source: &Source, path: &EntryPath, size: u64, hash: Hash) {
-		let entry = self.entries
-			.get_mut(source).expect("source should have been included when calling Header::new")
-			.get_mut(path).expect("entry should have been included when calling Header::new");
-		assert!(entry.is_none(), "can't set entry twice");
-		
-		// TODO: save size instead of position?
-		*entry = Some(Value {
-			size,
-			hash,
-		});
+	/// Saves the size and hash of the next entry in the given source to later be written as
+	/// part of the header.
+	/// 
+	/// **Attention:** Entries of a source must be added in the exact same order as they are in
+	/// the [`Sources`] passed to [`HeaderBuilder::new`].
+	/// 
+	/// # Panics
+	/// 
+	/// Panics if `source` was not included in the [`Sources`] passed to [`HeaderBuilder::new`].
+	pub fn push_entry(&mut self, source: &Source, size: u64, hash: Hash) {
+		self.entries.get_mut(source).expect("source must be included in sources")
+			.push(Value {
+				size,
+				hash,
+			});
 	}
 	
 	pub fn header_size(&self) -> u64 {
@@ -89,19 +84,19 @@ impl HeaderBuilder {
 		size += size_of::<u32>() as u64;
 		// sources
 		#[allow(clippy::needless_as_bytes, reason = "be more explicit about the length being in bytes")]
-		for (source, entries) in self.entries.iter() {
+		for (source, entries) in self.sources.iter() {
 			// id length + id + entry count
 			size += size_of::<u32>() as u64;
 			size += source.id.as_bytes().len() as u64;
 			size += size_of::<u32>() as u64;
 			
 			// entries
-			for (entry_path, _) in entries.iter() {
+			for entry in entries.into_iter() {
 				// hash + position + path length + path
 				size += size_of::<Hash>() as u64;
 				size += size_of::<u64>() as u64;
 				size += size_of::<u32>() as u64;
-				size += entry_path.as_bytes().len() as u64;
+				size += entry.path.as_bytes().len() as u64;
 			}
 		}
 		size
@@ -117,23 +112,23 @@ impl HeaderBuilder {
 		let source_count: u32 = self.entries.len().try_into().expect("shouldn't contain that many sources");
 		writer.write_all(&source_count.to_le_bytes())?;
 		// sources
-		for (source, entries) in self.entries.iter() {
+		for (source, entries) in self.sources.iter() {
 			// no need to store source.is_file, should be unambiguous to find out from the archive
 			// write: id length, id, entry count
 			write_slice(&mut writer, source.id.as_bytes())?;
 			let entry_count: u32 = entries.len().try_into().expect("shouldn't contain that many entries");
 			writer.write_all(&entry_count.to_le_bytes())?;
 			
+			// TODO: rename value?
+			let entry_values = self.entries.get(source).expect("all sources were added to entries in constructor");
+			
 			// entries
 			// TODO: rename value?
-			for (entry_path, value) in entries.iter() {
-				let Some(value) = value else {
-					panic!("No hash and position set for entry with path {} in source {}", entry_path, source.id);
-				};
+			for (entry, value) in entries.into_iter().zip(entry_values) {
 				// write: hash, size, path length, path
 				writer.write_all(value.hash.as_bytes())?;
 				writer.write_all(&value.size.to_le_bytes())?;
-				write_slice(&mut writer, entry_path.as_bytes())?;
+				write_slice(&mut writer, entry.path.as_bytes())?;
 			}
 		}
 		

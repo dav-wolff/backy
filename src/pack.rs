@@ -95,24 +95,13 @@ fn pack_group(
 	encrypter.write_all(&skip_buffer)?;
 	
 	// write files
+	// NOTE: the order must not change, as described in HeaderBuilder::push_entry
 	for (source, entries) in sources {
-		// FIXME: just a temporary fix to use the same order as the header
-		let entry_map: BTreeMap<EntryPath, Entry> = match entries {
-			Entries::File(entry) => {
-				let mut map = BTreeMap::new();
-				map.insert(entry.path.clone(), entry.clone());
-				map
-			},
-			Entries::Directory(entries) => entries.iter()
-				.map(|entry| (entry.path.clone(), entry.clone()))
-				.collect(),
-		};
-		
-		for entry in entry_map.values() {
+		for entry in entries {
 			let file = File::open(entry.path.in_source(source))?;
 			let mut hashing_reader = HashingReader::new(file);
 			let size = io::copy(&mut hashing_reader, &mut encrypter)?;
-			header.set_entry(source, &entry.path, size, hashing_reader.finalize());
+			header.push_entry(source, size, hashing_reader.finalize());
 			
 			// use entry.size, as this is the expected value necessary to add up to 100%
 			progress_tracker.advance(entry.size);
