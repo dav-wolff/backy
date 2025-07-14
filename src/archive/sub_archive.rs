@@ -1,5 +1,7 @@
 use std::{borrow::Borrow, io::{self, Read, Seek, SeekFrom}};
 
+use anyhow::{ensure, Context};
+
 use crate::{crypto::{DecryptReader, IV}, header::Header, index::EntryPath, Key, BKY_HEADER};
 
 pub struct SubArchive<R: Read + Seek> {
@@ -9,19 +11,17 @@ pub struct SubArchive<R: Read + Seek> {
 }
 
 impl<R: Read + Seek> SubArchive<R> {
-	pub fn new(mut reader: R, key: Key) -> Result<Self, io::Error> {
+	pub fn new(mut reader: R, key: Key) -> anyhow::Result<Self> {
 		let mut bky_header = [0u8; BKY_HEADER.len()];
-		reader.read_exact(&mut bky_header)?;
+		reader.read_exact(&mut bky_header).context("not a backy archive")?;
 		
-		if bky_header != BKY_HEADER {
-			panic!("Not a backy archive");
-		}
+		ensure!(bky_header == BKY_HEADER, "not a backy archive");
 		
 		let mut iv = IV::default();
 		reader.read_exact(&mut iv)?;
 		let mut decrypter = DecryptReader::new(reader, key, iv)?;
 		
-		let header = Header::read_from(&mut decrypter)?;
+		let header = Header::read_from(&mut decrypter).context("parsing header")?;
 		let contents_start = decrypter.stream_position()?;
 		
 		Ok(Self {
@@ -52,22 +52,22 @@ impl<R: Read + Seek> SubArchive<R> {
 			.map(|entry| entry.path.as_str())
 	}
 	
-	pub fn read_file<'s>(&'s mut self, source: &str, path: &EntryPath) -> Option<io::Result<impl Read + use<'s, R>>> {
-		let entry = self.header.entries()
-			.get(source)?
-			.iter()
-			.find(|entry| &entry.path == path)?;
+	pub fn read_file<'s>(&'s mut self, source: &str, path: &EntryPath) -> anyhow::Result<Option<impl Read + use<'s, R>>> {
+		let Some(source) = self.header.entries().get(source) else {
+			return Ok(None);
+		};
+		let Some(entry) = source.iter().find(|entry| &entry.path == path) else {
+			return Ok(None);
+		};
 		
-		if let Err(err) = self.decrypter.seek(SeekFrom::Start(self.contents_start + entry.position)) {
-			return Some(Err(err));
-		}
+		self.decrypter.seek(SeekFrom::Start(self.contents_start + entry.position)).context("seeking to file contents")?;
 		
-		Some(Ok((&mut self.decrypter).take(entry.size)))
+		Ok(Some((&mut self.decrypter).take(entry.size)))
 	}
 	
-	pub fn for_each_file<F>(&mut self, mut callback: F) -> Result<(), io::Error>
+	pub fn for_each_file<F>(&mut self, mut callback: F) -> anyhow::Result<()>
 	where
-		F: FnMut(&str, &EntryPath, u64, io::Take<&mut DecryptReader<R>>) -> io::Result<()>,
+		F: FnMut(&str, &EntryPath, u64, io::Take<&mut DecryptReader<R>>) -> anyhow::Result<()>,
 	{
 		self.decrypter.seek(SeekFrom::Start(self.contents_start))?;
 		
@@ -75,6 +75,7 @@ impl<R: Read + Seek> SubArchive<R> {
 			for entry in entries {
 				let reader = (&mut self.decrypter).take(entry.size);
 				callback(source, &entry.path, entry.size, reader)?;
+				// TODO: ensure that reader is fully read?
 			}
 		}
 		

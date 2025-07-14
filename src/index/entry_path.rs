@@ -1,5 +1,7 @@
 use std::{fmt::Display, path::Path};
 
+use anyhow::anyhow;
+
 use super::*;
 
 // TODO: should this contain a string? Paths should be UTF-8 for compatibility
@@ -14,16 +16,20 @@ impl EntryPath {
 	
 	// TODO: is this a false positive?
 	#[expect(private_interfaces)]
-	pub fn new(source: &Source, path: &Path) -> Self {
-		Self(
+	pub fn new(source: &Source, path: &Path) -> anyhow::Result<Self> {
+		Ok(Self(
 			path.strip_prefix(&source.path).expect("path must be inside source")
-				.to_str().unwrap() // TODO: return error
+				.to_str().with_context(|| format!("path {:?} is not representable as UTF-8", path))?
 				.to_owned()
-		)
+		))
 	}
 	
-	pub fn from_bytes(bytes: Vec<u8>) -> Self {
-		Self(String::from_utf8(bytes).unwrap()) // TODO: return error
+	pub fn from_bytes(bytes: Vec<u8>) -> anyhow::Result<Self> {
+		let string = String::from_utf8(bytes).map_err(|err| {
+			let context = format!("invalid entry path: {:?}", String::from_utf8_lossy(err.as_bytes()));
+			anyhow!(err).context(context)
+		})?;
+		Ok(Self(string))
 	}
 	
 	pub fn in_source(&self, source: &Source) -> PathBuf {

@@ -106,6 +106,7 @@ impl<R: Read + Seek> Seek for DecryptReader<R> {
 			seek_from => self.inner.seek(seek_from)?,
 		};
 		
+		// TODO: should this be an error?
 		if new_pos < self.inner_start_pos {
 			new_pos = self.inner.seek(SeekFrom::Start(self.inner_start_pos))?;
 			assert!(new_pos >= self.inner_start_pos);

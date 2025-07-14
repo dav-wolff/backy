@@ -11,11 +11,11 @@ pub struct ProgressDisplay {
 
 impl ProgressDisplay {
 	pub fn new(total_progress: u64) -> Self {
-		let total_style = ProgressStyle::with_template("{prefix} ({binary_bytes_per_sec} | {eta} remaining):  [{wide_bar:.blue/blue}]  {percent}% ").unwrap()
+		let total_style = ProgressStyle::with_template("{prefix} ({binary_bytes_per_sec} | {eta} remaining):  [{wide_bar:.blue/blue}]  {percent}% ").expect("should be valid")
 			.progress_chars("##-");
-		let style = ProgressStyle::with_template("{prefix}:  [{wide_bar:.yellow/yellow}]  {percent}% ").unwrap()
+		let style = ProgressStyle::with_template("{prefix}:  [{wide_bar:.yellow/yellow}]  {percent}% ").expect("should be valid")
 			.progress_chars("##-");
-		let finished_style = ProgressStyle::with_template("{prefix}  [{wide_bar:.green}]  {percent}% ").unwrap()
+		let finished_style = ProgressStyle::with_template("{prefix}  [{wide_bar:.green}]  {percent}% ").expect("should be valid")
 			.progress_chars("##-");
 		
 		let progress_bars = MultiProgress::new();

@@ -3,6 +3,7 @@
 
 use std::{fs, io::{self, Write}, path::PathBuf};
 
+use anyhow::{ensure, Context};
 use backy::Key;
 use base64::{prelude::BASE64_STANDARD, Engine};
 use clap::{command, Args, Parser, Subcommand};
@@ -119,7 +120,7 @@ struct GetArgs {
 	key_file: Option<PathBuf>,
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
 	let args = BackyArgs::parse();
 	
 	match args.command {
@@ -129,30 +130,28 @@ fn main() {
 			println!("{base64_key}");
 		},
 		Commands::Pack(pack_args) => {
-			let key = get_key(pack_args.key, pack_args.key_file);
+			let key = get_key(pack_args.key, pack_args.key_file)?;
 			// TODO handle file already exists
-			backy::pack(pack_args.sources, pack_args.out, key, pack_args.size).unwrap();
+			backy::pack(pack_args.sources, pack_args.out, key, pack_args.size)?;
 		},
 		Commands::Unpack(unpack_args) => {
-			let key = get_key(unpack_args.key, unpack_args.key_file);
-			backy::Archive::new(unpack_args.archive, key).unwrap()
-				.unpack(unpack_args.out).unwrap();
+			let key = get_key(unpack_args.key, unpack_args.key_file)?;
+			backy::Archive::new(unpack_args.archive, key)?
+				.unpack(unpack_args.out)?;
 		},
 		Commands::ListSources(list_sources_args) => {
-			let key = get_key(list_sources_args.key, list_sources_args.key_file);
-			let archive = backy::Archive::new(list_sources_args.archive, key).unwrap();
+			let key = get_key(list_sources_args.key, list_sources_args.key_file)?;
+			let archive = backy::Archive::new(list_sources_args.archive, key)?;
 			for source in archive.sources() {
 				println!("{source}");
 			}
 		},
 		Commands::List(list_args) => {
-			let key = get_key(list_args.key, list_args.key_file);
-			let archive = backy::Archive::new(list_args.archive, key).unwrap();
+			let key = get_key(list_args.key, list_args.key_file)?;
+			let archive = backy::Archive::new(list_args.archive, key)?;
 			
 			if let Some(source) = &list_args.source {
-				if !archive.sources().any(|s| s == source) {
-					panic!("source {source} is not contained in this archive");
-				}
+				ensure!(archive.sources().any(|s| s == source), "source {source} is not contained in this archive");
 			}
 			
 			if list_args.source.is_some() {
@@ -163,41 +162,41 @@ fn main() {
 			let mut writer = stdout.lock();
 			for path in archive.file_paths() {
 				// TODO: include source in output?
-				writer.write_all(path.as_bytes()).unwrap();
-				writer.write_all(b"\n").unwrap();
+				writer.write_all(path.as_bytes()).context("writing to stdout")?;
+				writer.write_all(b"\n").context("writing to stdout")?;
 			}
-			stdout.flush().unwrap();
+			stdout.flush().context("writing to stdout")?;
 		},
 		Commands::Get(get_args) => {
-			let key = get_key(get_args.key, get_args.key_file);
-			let mut archive = backy::Archive::new(get_args.archive, key).unwrap();
+			let key = get_key(get_args.key, get_args.key_file)?;
+			let mut archive = backy::Archive::new(get_args.archive, key)?;
 			
 			let mut stdout = io::stdout().lock();
-			let mut reader = archive.get_file(get_args.source.as_ref().map(AsRef::as_ref), &get_args.path).unwrap().unwrap();
-			io::copy(&mut reader, &mut stdout).unwrap();
+			let mut reader = archive.get_file(get_args.source.as_ref().map(AsRef::as_ref), &get_args.path)?.unwrap();
+			io::copy(&mut reader, &mut stdout).context("reading file contents")?;
 		},
 	}
+	
+	Ok(())
 }
 
-fn get_key(key_string: Option<String>, key_file: Option<PathBuf>) -> Key {
-	// TODO: handle errors
+fn get_key(key_string: Option<String>, key_file: Option<PathBuf>) -> anyhow::Result<Key> {
 	let base64_key = match (key_string, key_file) {
 		(Some(_), Some(_)) => unreachable!("clap ensures key and key_file are mutually exclusive"),
 		(Some(base64_key), None) => base64_key,
 		(None, Some(key_file)) => {
-			let string = fs::read_to_string(key_file).unwrap();
+			let string = fs::read_to_string(key_file).context("reading key from file")?;
 			string.trim().to_owned()
 		},
 		(None, None) => {
-			rpassword::prompt_password("Enter key: ").unwrap()
+			rpassword::prompt_password("Enter key: ").context("reading key from stdin")?
 		},
 	};
 	
 	let mut key = Key::default();
 	
-	if BASE64_STANDARD.decode_slice(base64_key, &mut key).unwrap() != 32 {
-		panic!("key has wrong size");
-	}
+	let decoded_len = BASE64_STANDARD.decode_slice(base64_key, &mut key).context("base64 decoding key")?;
+	ensure!(decoded_len == 32, "key has wrong size");
 	
-	key
+	Ok(key)
 }

@@ -1,7 +1,8 @@
 // TODO: should this be a submodule of pack?
 
-use std::{collections::BTreeMap, io, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf};
 
+use anyhow::Context;
 use either::Either;
 use walkdir::WalkDir;
 
@@ -68,7 +69,7 @@ struct SourceEntry {
 }
 
 impl Index {
-	pub fn from_sources(sources: Vec<Source>, max_group_size: Option<u64>) -> Result<Self, io::Error> {
+	pub fn from_sources(sources: Vec<Source>, max_group_size: Option<u64>) -> anyhow::Result<Self> {
 		let (entries, total_size) = index_files(sources)?;
 		
 		let entries = match max_group_size {
@@ -91,7 +92,7 @@ impl Index {
 	}
 }
 
-fn index_files(sources: Vec<Source>) -> Result<(Vec<SourceEntry>, u64), io::Error> {
+fn index_files(sources: Vec<Source>) -> anyhow::Result<(Vec<SourceEntry>, u64)> {
 	let format = humansize::make_format(humansize::BINARY);
 	let mut index = Vec::new();
 	
@@ -100,9 +101,11 @@ fn index_files(sources: Vec<Source>) -> Result<(Vec<SourceEntry>, u64), io::Erro
 	
 	for source in sources {
 		if source.is_file {
+			let metadata = source.path.metadata().with_context(|| format!("querying metadata for {:?}", source.path))?;
+			
 			index.push(SourceEntry {
 				path: EntryPath::empty(),
-				size: source.path.metadata()?.len(),
+				size: metadata.len(),
 				source,
 			});
 			continue;
@@ -113,19 +116,20 @@ fn index_files(sources: Vec<Source>) -> Result<(Vec<SourceEntry>, u64), io::Erro
 		let mut source_size = 0;
 		
 		for entry in WalkDir::new(&source.path).follow_links(true) {
-			let entry = entry?;
+			let entry = entry.with_context(|| format!("iterating entries in {:?}", source.path))?;
 			
 			if !entry.file_type().is_file() {
 				continue;
 			}
 			
-			let size = entry.metadata()?.len();
+			let metadata = entry.metadata().with_context(|| format!("querying metadata for {:?}", entry.path()))?;
+			let size = metadata.len();
 			source_size += size;
 			
 			index.push(SourceEntry {
 				source: source.clone(),
-				path: EntryPath::new(&source, entry.path()),
-				size: entry.metadata()?.len(),
+				path: EntryPath::new(&source, entry.path())?,
+				size,
 			});
 		}
 		

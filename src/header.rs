@@ -105,7 +105,7 @@ impl<'a> HeaderBuilder<'a> {
 	}
 	
 	// NOTE: if this is updated header_size and Header::read_from might need to be updated as well
-	pub fn write_header(&self, mut writer: impl Write + Seek) -> Result<(), io::Error> {
+	pub fn write_header(&self, mut writer: impl Write + Seek) -> io::Result<()> {
 		let start_position = writer.stream_position()?;
 		
 		// write: flags
@@ -159,7 +159,7 @@ pub struct Header {
 }
 
 impl Header {
-	pub fn read_from(mut reader: impl Read) -> Result<Self, io::Error> {
+	pub fn read_from(mut reader: impl Read) -> anyhow::Result<Self> {
 		// read: flags
 		let flags = Flags::from_bytes(read_bytes(&mut reader)?);
 		
@@ -176,7 +176,11 @@ impl Header {
 		let mut entries: BTreeMap<String, Vec<Entry>> = BTreeMap::new();
 		for _ in 0..source_count {
 			// read: id length, id, entry count
-			let id = String::from_utf8(read_slice(&mut reader)?).unwrap(); // TODO: return custom error
+			let id = read_slice(&mut reader)?;
+			let id = String::from_utf8(id).map_err(|err| {
+				let context = format!("invalid source name: {:?}", String::from_utf8_lossy(err.as_bytes()));
+				anyhow::anyhow!(err).context(context)
+			})?;
 			let entry_count = read_u32(&mut reader)?;
 			
 			// entries
@@ -185,7 +189,7 @@ impl Header {
 				// read: hash, size, path_length, path
 				let hash = Hash::from_bytes(read_bytes(&mut reader)?);
 				let size = read_u64(&mut reader)?;
-				let path = EntryPath::from_bytes(read_slice(&mut reader)?);
+				let path = EntryPath::from_bytes(read_slice(&mut reader)?)?;
 				
 				source_entries.push(Entry {
 					hash,
@@ -216,29 +220,29 @@ impl Header {
 	}
 }
 
-fn write_slice(mut writer: impl Write, slice: &[u8]) -> Result<(), io::Error> {
+fn write_slice(mut writer: impl Write, slice: &[u8]) -> io::Result<()> {
 	writer.write_all(&(slice.len() as u32).to_le_bytes())?;
 	writer.write_all(slice)?;
 	Ok(())
 }
 
-fn read_slice(mut reader: impl Read) -> Result<Vec<u8>, io::Error> {
+fn read_slice(mut reader: impl Read) -> io::Result<Vec<u8>> {
 	let len = read_u32(&mut reader)?;
 	let mut buf = vec![0; len as usize];
 	reader.read_exact(&mut buf)?;
 	Ok(buf)
 }
 
-fn read_bytes<const LEN: usize>(mut reader: impl Read) -> Result<[u8; LEN], io::Error> {
+fn read_bytes<const LEN: usize>(mut reader: impl Read) -> io::Result<[u8; LEN]> {
 	let mut bytes = [0; LEN];
 	reader.read_exact(&mut bytes)?;
 	Ok(bytes)
 }
 
-fn read_u32(reader: impl Read) -> Result<u32, io::Error> {
+fn read_u32(reader: impl Read) -> io::Result<u32> {
 	Ok(u32::from_le_bytes(read_bytes(reader)?))
 }
 
-fn read_u64(reader: impl Read) -> Result<u64, io::Error> {
+fn read_u64(reader: impl Read) -> io::Result<u64> {
 	Ok(u64::from_le_bytes(read_bytes(reader)?))
 }
