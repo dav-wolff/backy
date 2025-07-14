@@ -72,7 +72,9 @@ impl Archive {
 				let is_single_source = sub_archive.is_single_source();
 				
 				sub_archive.for_each_file(|source, path, size, mut reader| {
-					let dest = if is_single_source {
+					let dest = if path.as_str().is_empty() { // source is a file
+						out_dir.join(source)
+					} else if is_single_source {
 						out_dir.join(path.as_path())
 					} else {
 						out_dir.join(source).join(path.as_path())
@@ -101,6 +103,7 @@ impl Archive {
 			.flat_map(|sub_archive| sub_archive.sources())
 	}
 	
+	// TODO: better way to output file sources?
 	pub fn file_paths(&self) -> impl Iterator<Item = &str> {
 		self.sub_archives.iter()
 			.map(|data| &data.sub_archive)

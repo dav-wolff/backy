@@ -130,8 +130,12 @@ fn pack_contents(
 	// NOTE: the order must not change, as described in HeaderBuilder::push_entry
 	for (source, entries) in sources {
 		for entry in entries {
-			let path = entry.path.in_source(source);
-			let file = File::open(&path).with_context(|| format!("opening file at {:?}", path))?;
+			let path = if source.is_file {
+				&*source.path
+			} else {
+				&*entry.path.in_source(source)
+			};
+			let file = File::open(path).with_context(|| format!("opening file at {:?}", path))?;
 			let mut hashing_reader = HashingReader::new(file);
 			let size = io::copy(&mut hashing_reader, &mut writer).with_context(|| format!("archiving file {:?}", path))?;
 			// NOTE: only push the entry once it is complete as it still gets written to the header in case of an error
