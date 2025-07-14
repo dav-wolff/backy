@@ -24,6 +24,12 @@ impl<R: Read + Seek> SubArchive<R> {
 		let header = Header::read_from(&mut decrypter).context("parsing header")?;
 		let contents_start = decrypter.stream_position()?;
 		
+		// TODO: should this be a hard error? a warning might be too easy to miss
+		// could potentially add a --allow-partial flag to explicitly unpack partial archives
+		if header.flags().is_partial {
+			eprintln!("Warning: Partial subarchive encountered, some files are missing");
+		}
+		
 		Ok(Self {
 			decrypter,
 			contents_start,

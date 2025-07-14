@@ -79,17 +79,18 @@ fn pack_group(
 	is_single_source: bool,
 	progress_tracker: ProgressTracker
 ) -> anyhow::Result<()> {
-	let mut file = File::create_new(out).with_context(|| format!("creating archive file at {:?}", out))?;
+	let mut file = File::create_new(out).with_context(|| format!("creating archive file at {out:?}"))?;
 	
 	// empty header line as the file is not yet a valid backy archive
-	file.write_all(&[0; BKY_HEADER.len()]).with_context(|| format!("writing to archive file at {:?}", out))?;
+	file.write_all(&[0; BKY_HEADER.len()]).with_context(|| format!("writing to archive file at {out:?}"))?;
 	
 	let iv = generate_iv()?;
-	file.write_all(&iv).with_context(|| format!("writing to archive file at {:?}", out))?;
+	file.write_all(&iv).with_context(|| format!("writing to archive file at {out:?}"))?;
 	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
 	
 	let mut header = HeaderBuilder::new(sources, Flags {
 		is_single_source,
+		is_partial: false,
 	});
 	
 	// skip header
@@ -98,16 +99,45 @@ fn pack_group(
 	let mut skip_buffer: Vec<u8> = Vec::with_capacity(header_size);
 	let skip_buffer = &mut skip_buffer.spare_capacity_mut()[..header_size];
 	let skip_buffer = getrandom::fill_uninit(skip_buffer).map_err(|err| anyhow!(err).context("obtaining random bytes"))?;
-	encrypter.write_all(skip_buffer).with_context(|| format!("writing to archive file at {:?}", out))?;
+	encrypter.write_all(skip_buffer).with_context(|| format!("writing to archive file at {out:?}"))?;
 	
-	// write files
+	let pack_contents_result = pack_contents(progress_tracker, sources, &mut encrypter, &mut header)
+		.with_context(|| format!("archiving contents to {out:?}"));
+	
+	// TODO: should this error still be returned?
+	if let Err(err) = &pack_contents_result {
+		eprintln!("An error occured: {err:?}\n");
+		eprintln!("Attempting to write header for partial archive...");
+	}
+	
+	// reset file
+	file.seek(SeekFrom::Start((BKY_HEADER.len() + size_of::<IV>()) as u64)).with_context(|| format!("writing to archive file at {out:?}"))?;
+	// reset encrypter
+	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
+	
+	header.write_header(pack_contents_result.is_err(), &mut encrypter).with_context(|| format!("writing to archive file at {out:?}"))?;
+	
+	// finally write header line to indicate a valid backy archive
+	file.rewind().with_context(|| format!("writing to archive file at {out:?}"))?;
+	file.write_all(BKY_HEADER).with_context(|| format!("writing to archive file at {out:?}"))?;
+	
+	Ok(())
+}
+
+fn pack_contents(
+	progress_tracker: ProgressTracker,
+	sources: &Sources,
+	mut writer: impl Write,
+	header: &mut HeaderBuilder
+) -> anyhow::Result<()> {
 	// NOTE: the order must not change, as described in HeaderBuilder::push_entry
 	for (source, entries) in sources {
 		for entry in entries {
 			let path = entry.path.in_source(source);
 			let file = File::open(&path).with_context(|| format!("opening file at {:?}", path))?;
 			let mut hashing_reader = HashingReader::new(file);
-			let size = io::copy(&mut hashing_reader, &mut encrypter).with_context(|| format!("archiving file {:?} to {:?}", path, out))?;
+			let size = io::copy(&mut hashing_reader, &mut writer).with_context(|| format!("archiving file {:?}", path))?;
+			// NOTE: only push the entry once it is complete as it still gets written to the header in case of an error
 			header.push_entry(source, size, hashing_reader.finalize());
 			
 			// use entry.size, as this is the expected value necessary to add up to 100%
@@ -124,17 +154,6 @@ fn pack_group(
 			}
 		}
 	}
-	
-	// reset file
-	file.seek(SeekFrom::Start((BKY_HEADER.len() + size_of::<IV>()) as u64)).with_context(|| format!("writing to archive file at {:?}", out))?;
-	// reset encrypter
-	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
-	
-	header.write_header(&mut encrypter).with_context(|| format!("writing to archive file at {:?}", out))?;
-	
-	// finally write header line to indicate a valid backy archive
-	file.rewind().with_context(|| format!("writing to archive file at {:?}", out))?;
-	file.write_all(BKY_HEADER).with_context(|| format!("writing to archive file at {:?}", out))?;
 	
 	Ok(())
 }

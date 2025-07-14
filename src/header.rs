@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, io::{self, Read, Seek, Write}};
+use std::{collections::BTreeMap, io::{self, Read, Seek, SeekFrom, Write}};
 
 use blake3::Hash;
 
@@ -7,6 +7,7 @@ use crate::{index::{EntryPath, Sources}, Source};
 #[derive(Clone, Copy, Debug)]
 pub struct Flags {
 	pub is_single_source: bool,
+	pub is_partial: bool,
 }
 
 impl Flags {
@@ -17,6 +18,10 @@ impl Flags {
 			flags |= 1;
 		}
 		
+		if self.is_partial {
+			flags |= 2;
+		}
+		
 		flags.to_le_bytes()
 	}
 	
@@ -24,9 +29,11 @@ impl Flags {
 		let flags = u32::from_le_bytes(bytes);
 		
 		let is_single_source = flags & 1 != 0;
+		let is_partial = flags & 2 != 0;
 		
 		Self {
 			is_single_source,
+			is_partial,
 		}
 	}
 }
@@ -105,11 +112,14 @@ impl<'a> HeaderBuilder<'a> {
 	}
 	
 	// NOTE: if this is updated header_size and Header::read_from might need to be updated as well
-	pub fn write_header(&self, mut writer: impl Write + Seek) -> io::Result<()> {
+	pub fn write_header(&self, is_partial: bool, mut writer: impl Write + Seek) -> io::Result<()> {
+		let mut flags = self.flags;
+		flags.is_partial = is_partial;
+		
 		let start_position = writer.stream_position()?;
 		
 		// write: flags
-		writer.write_all(&self.flags.to_bytes())?;
+		writer.write_all(&flags.to_bytes())?;
 		// write: previous subarchive count (not yet implemented)
 		let prev_sub_archive_count = 0u32;
 		writer.write_all(&prev_sub_archive_count.to_le_bytes())?;
@@ -118,14 +128,15 @@ impl<'a> HeaderBuilder<'a> {
 		writer.write_all(&source_count.to_le_bytes())?;
 		// sources
 		for (source, entries) in self.sources.iter() {
+			// TODO: rename value?
+			let entry_values = self.entries.get(source).expect("all sources were added to entries in constructor");
+			
 			// no need to store source.is_file, should be unambiguous to find out from the archive
 			// write: id length, id, entry count
 			write_slice(&mut writer, source.id.as_bytes())?;
-			let entry_count: u32 = entries.len().try_into().expect("shouldn't contain that many entries");
+			// use entry_values.len() instead of entries.len() in case a partial header is being written
+			let entry_count: u32 = entry_values.len().try_into().expect("shouldn't contain that many entries");
 			writer.write_all(&entry_count.to_le_bytes())?;
-			
-			// TODO: rename value?
-			let entry_values = self.entries.get(source).expect("all sources were added to entries in constructor");
 			
 			// entries
 			// TODO: rename value?
@@ -138,7 +149,17 @@ impl<'a> HeaderBuilder<'a> {
 		}
 		
 		let bytes_written = writer.stream_position()? - start_position;
-		assert_eq!(bytes_written, self.header_size());
+		let expected_size = self.header_size();
+		
+		if is_partial {
+			assert!(bytes_written + size_of::<u64>() as u64 <= expected_size, "partial header should leave enough space to write the remaining size");
+			
+			// write: remaining size
+			let remaining_size = expected_size - bytes_written - size_of::<u64>() as u64; // total - already written - about to write
+			writer.write_all(&remaining_size.to_le_bytes())?;
+		} else {
+			assert_eq!(bytes_written, expected_size);
+		}
 		
 		Ok(())
 	}
@@ -159,7 +180,7 @@ pub struct Header {
 }
 
 impl Header {
-	pub fn read_from(mut reader: impl Read) -> anyhow::Result<Self> {
+	pub fn read_from(mut reader: impl Read + Seek) -> anyhow::Result<Self> {
 		// read: flags
 		let flags = Flags::from_bytes(read_bytes(&mut reader)?);
 		
@@ -203,6 +224,12 @@ impl Header {
 			
 			let prev_entry = entries.insert(id, source_entries);
 			assert!(prev_entry.is_none());
+		}
+		
+		if flags.is_partial {
+			// read: remaining size
+			let remaining_size = read_u64(&mut reader)?;
+			reader.seek(SeekFrom::Current(remaining_size as i64))?;
 		}
 		
 		Ok(Self {
