@@ -1,20 +1,21 @@
 use std::io::{self, Read, Seek, SeekFrom, Write};
 
+use anyhow::anyhow;
 use chacha20::{cipher::{consts::{U24, U32}, generic_array::GenericArray, KeyIvInit, StreamCipher, StreamCipherSeek}, XChaCha20};
 
 pub type Key = GenericArray<u8, U32>;
 pub type IV = GenericArray<u8, U24>;
 
-pub fn generate_key() -> Key {
+pub fn generate_key() -> anyhow::Result<Key> {
 	let mut key = Key::default();
-	getrandom::fill(&mut key).expect("random data should be available");
-	key
+	getrandom::fill(&mut key).map_err(|err| anyhow!(err).context("obtaining random bytes"))?;
+	Ok(key)
 }
 
-pub fn generate_iv() -> IV {
+pub fn generate_iv() -> anyhow::Result<IV> {
 	let mut iv = IV::default();
-	getrandom::fill(&mut iv).expect("random data should be available");
-	iv
+	getrandom::fill(&mut iv).map_err(|err| anyhow!(err).context("obtaining random bytes"))?;
+	Ok(iv)
 }
 
 pub struct EncryptWriter<W: Write> {

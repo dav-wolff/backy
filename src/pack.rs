@@ -83,7 +83,7 @@ fn pack_group(
 	
 	file.write_all(BKY_HEADER).with_context(|| format!("writing to archive file at {:?}", out))?;
 	
-	let iv = generate_iv();
+	let iv = generate_iv()?;
 	file.write_all(&iv).with_context(|| format!("writing to archive file at {:?}", out))?;
 	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
 	
@@ -92,11 +92,12 @@ fn pack_group(
 	});
 	
 	// skip header
-	let header_size = header.header_size();
+	let header_size: usize = header.header_size().try_into().expect("header size too large");
 	
-	// TODO: use random data
-	let skip_buffer = vec![0; header_size.try_into().expect("header size too large")];
-	encrypter.write_all(&skip_buffer).with_context(|| format!("writing to archive file at {:?}", out))?;
+	let mut skip_buffer: Vec<u8> = Vec::with_capacity(header_size);
+	let skip_buffer = &mut skip_buffer.spare_capacity_mut()[..header_size];
+	let skip_buffer = getrandom::fill_uninit(skip_buffer).map_err(|err| anyhow!(err).context("obtaining random bytes"))?;
+	encrypter.write_all(skip_buffer).with_context(|| format!("writing to archive file at {:?}", out))?;
 	
 	// write files
 	// NOTE: the order must not change, as described in HeaderBuilder::push_entry

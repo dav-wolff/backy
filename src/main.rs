@@ -100,7 +100,7 @@ fn main() -> anyhow::Result<()> {
 	let args = BackyArgs::parse();
 	
 	if matches!(args.command, Commands::GenerateKey) {
-		let key = backy::generate_key();
+		let key = backy::generate_key()?;
 		let base64_key = BASE64_STANDARD.encode(key);
 		println!("{base64_key}");
 		return Ok(());
