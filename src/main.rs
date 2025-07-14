@@ -20,6 +20,12 @@ fn parse_size(arg: &str) -> Result<u64, parse_size::Error> {
 struct BackyArgs {
 	#[command(subcommand)]
 	command: Commands,
+	/// Key to use for decryption
+	#[arg(short, long, global = true, conflicts_with = "key_file")]
+	key: Option<String>,
+	/// File containing the key to use for decryption
+	#[arg(short = 'f', long, global = true, conflicts_with = "key")]
+	key_file: Option<PathBuf>,
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -53,12 +59,6 @@ struct PackArgs {
 	// /// Level of compression to use
 	// #[arg(short = 'l', long, value_parser = parse_compression_level, default_value = "9")]
 	// compression_level: u32,
-	/// Key to use for encryption
-	#[arg(short, long, conflicts_with = "key_file")]
-	key: Option<String>,
-	/// File containing the key to use for encryption
-	#[arg(short = 'f', long, conflicts_with = "key")]
-	key_file: Option<PathBuf>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -68,24 +68,12 @@ struct UnpackArgs {
 	/// Directory to unpack the sources into
 	#[arg(short, long, default_value = ".")]
 	out: PathBuf,
-	/// Key to use for decryption
-	#[arg(short, long, conflicts_with = "key_file")]
-	key: Option<String>,
-	/// File containing the key to use for decryption
-	#[arg(short = 'f', long, conflicts_with = "key")]
-	key_file: Option<PathBuf>,
 }
 
 #[derive(Args, Clone, Debug)]
 struct ListSourcesArgs {
 	/// The backy archive to list sources of (can be a file or directory)
 	archive: PathBuf,
-	/// Key to use for decryption
-	#[arg(short, long, conflicts_with = "key_file")]
-	key: Option<String>,
-	/// File containing the key to use for decryption
-	#[arg(short = 'f', long, conflicts_with = "key")]
-	key_file: Option<PathBuf>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -95,12 +83,6 @@ struct ListArgs {
 	/// The source containing the files to be listed
 	#[arg(short, long)]
 	source: Option<String>,
-	/// Key to use for decryption
-	#[arg(short, long, conflicts_with = "key_file")]
-	key: Option<String>,
-	/// File containing the key to use for decryption
-	#[arg(short = 'f', long, conflicts_with = "key")]
-	key_file: Option<PathBuf>,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -112,42 +94,37 @@ struct GetArgs {
 	/// The source to look for the file in
 	#[arg(short, long)]
 	source: Option<String>,
-	/// Key to use for decryption
-	#[arg(short, long, conflicts_with = "key_file")]
-	key: Option<String>,
-	/// File containing the key to use for decryption
-	#[arg(short = 'f', long, conflicts_with = "key")]
-	key_file: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
 	let args = BackyArgs::parse();
 	
+	if matches!(args.command, Commands::GenerateKey) {
+		let key = backy::generate_key();
+		let base64_key = BASE64_STANDARD.encode(key);
+		println!("{base64_key}");
+		return Ok(());
+	}
+	
+	let key = get_key(args.key, args.key_file)?;
+	
 	match args.command {
-		Commands::GenerateKey => {
-			let key = backy::generate_key();
-			let base64_key = BASE64_STANDARD.encode(key);
-			println!("{base64_key}");
-		},
+		Commands::GenerateKey => unreachable!("handled with early return"),
 		Commands::Pack(pack_args) => {
-			let key = get_key(pack_args.key, pack_args.key_file)?;
 			// TODO handle file already exists
 			backy::pack(pack_args.sources, pack_args.out, key, pack_args.size)?;
 		},
 		Commands::Unpack(unpack_args) => {
-			let key = get_key(unpack_args.key, unpack_args.key_file)?;
 			backy::Archive::new(unpack_args.archive, key)?
 				.unpack(unpack_args.out)?;
 		},
 		Commands::ListSources(list_sources_args) => {
-			let key = get_key(list_sources_args.key, list_sources_args.key_file)?;
 			let archive = backy::Archive::new(list_sources_args.archive, key)?;
 			for source in archive.sources() {
 				println!("{source}");
 			}
 		},
 		Commands::List(list_args) => {
-			let key = get_key(list_args.key, list_args.key_file)?;
 			let archive = backy::Archive::new(list_args.archive, key)?;
 			
 			if let Some(source) = &list_args.source {
@@ -168,7 +145,6 @@ fn main() -> anyhow::Result<()> {
 			stdout.flush().context("writing to stdout")?;
 		},
 		Commands::Get(get_args) => {
-			let key = get_key(get_args.key, get_args.key_file)?;
 			let mut archive = backy::Archive::new(get_args.archive, key)?;
 			
 			let mut stdout = io::stdout().lock();
