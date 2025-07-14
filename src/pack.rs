@@ -1,4 +1,4 @@
-use std::{fs::{self, File}, io::{self, Seek, Write}, path::{Path, PathBuf}};
+use std::{fs::{self, File}, io::{self, Seek, SeekFrom, Write}, path::{Path, PathBuf}};
 
 use anyhow::{anyhow, bail, Context};
 use hashing_reader::HashingReader;
@@ -81,7 +81,8 @@ fn pack_group(
 ) -> anyhow::Result<()> {
 	let mut file = File::create_new(out).with_context(|| format!("creating archive file at {:?}", out))?;
 	
-	file.write_all(BKY_HEADER).with_context(|| format!("writing to archive file at {:?}", out))?;
+	// empty header line as the file is not yet a valid backy archive
+	file.write_all(&[0; BKY_HEADER.len()]).with_context(|| format!("writing to archive file at {:?}", out))?;
 	
 	let iv = generate_iv()?;
 	file.write_all(&iv).with_context(|| format!("writing to archive file at {:?}", out))?;
@@ -125,11 +126,15 @@ fn pack_group(
 	}
 	
 	// reset file
-	file.seek(io::SeekFrom::Start((BKY_HEADER.len() + size_of::<IV>()) as u64)).with_context(|| format!("writing to archive file at {:?}", out))?;
+	file.seek(SeekFrom::Start((BKY_HEADER.len() + size_of::<IV>()) as u64)).with_context(|| format!("writing to archive file at {:?}", out))?;
 	// reset encrypter
 	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
 	
 	header.write_header(&mut encrypter).with_context(|| format!("writing to archive file at {:?}", out))?;
+	
+	// finally write header line to indicate a valid backy archive
+	file.rewind().with_context(|| format!("writing to archive file at {:?}", out))?;
+	file.write_all(BKY_HEADER).with_context(|| format!("writing to archive file at {:?}", out))?;
 	
 	Ok(())
 }
