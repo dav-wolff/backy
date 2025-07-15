@@ -110,18 +110,15 @@ fn pack_group(
 		eprintln!("Attempting to write header for partial archive...");
 	}
 	
-	// reset file
-	file.seek(SeekFrom::Start((BKY_HEADER.len() + size_of::<IV>()) as u64)).with_context(|| format!("writing to archive file at {out:?}"))?;
-	// reset encrypter
-	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
+	let finish_result = finish_archive(file, key, iv, header, pack_contents_result.is_err())
+		.with_context(|| format!("writing header to archive file at {out:?}"));
 	
-	header.write_header(pack_contents_result.is_err(), &mut encrypter).with_context(|| format!("writing to archive file at {out:?}"))?;
-	
-	// finally write header line to indicate a valid backy archive
-	file.rewind().with_context(|| format!("writing to archive file at {out:?}"))?;
-	file.write_all(BKY_HEADER).with_context(|| format!("writing to archive file at {out:?}"))?;
-	
-	Ok(())
+	match (pack_contents_result, finish_result) {
+		(Err(err), Ok(())) => Err(err),
+		(Ok(()), Err(err)) => Err(err),
+		(Ok(()), Ok(())) => Ok(()),
+		(Err(pack_err), Err(finish_err)) => Err(pack_err.context("writing partial header after error occured").context(finish_err)),
+	}
 }
 
 fn pack_contents(
@@ -154,6 +151,21 @@ fn pack_contents(
 			}
 		}
 	}
+	
+	Ok(())
+}
+
+fn finish_archive(mut file: File, key: Key, iv: IV, header: HeaderBuilder, is_partial: bool) -> anyhow::Result<()> {
+	// reset file
+	file.seek(SeekFrom::Start((BKY_HEADER.len() + size_of::<IV>()) as u64))?;
+	// reset encrypter
+	let mut encrypter = EncryptWriter::new(&mut file, key, iv);
+	
+	header.write_header(is_partial, &mut encrypter)?;
+	
+	// finally write header line to indicate a valid backy archive
+	file.rewind()?;
+	file.write_all(BKY_HEADER)?;
 	
 	Ok(())
 }
