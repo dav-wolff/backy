@@ -55,6 +55,9 @@ struct PackArgs {
 	/// Maximum size of files in the out directory, defaults to GiB if no unit is given
 	#[arg(short, long, value_parser = parse_size)]
 	size: Option<u64>,
+	/// Don't display a progress tracker
+	#[arg(long)]
+	no_progress: bool,
 	// TODO: add compression again?
 	// /// Level of compression to use
 	// #[arg(short = 'l', long, value_parser = parse_compression_level, default_value = "9")]
@@ -68,6 +71,9 @@ struct UnpackArgs {
 	/// Directory to unpack the sources into
 	#[arg(short, long, default_value = ".")]
 	out: PathBuf,
+	/// Don't display a progress tracker
+	#[arg(long)]
+	no_progress: bool,
 }
 
 #[derive(Args, Clone, Debug)]
@@ -111,12 +117,11 @@ fn main() -> anyhow::Result<()> {
 	match args.command {
 		Commands::GenerateKey => unreachable!("handled with early return"),
 		Commands::Pack(pack_args) => {
-			// TODO handle file already exists
-			backy::pack(pack_args.sources, pack_args.out, key, pack_args.size)?;
+			backy::pack(pack_args.sources, pack_args.out, key, pack_args.size, !pack_args.no_progress)?;
 		},
 		Commands::Unpack(unpack_args) => {
 			backy::Archive::new(unpack_args.archive, key)?
-				.unpack(unpack_args.out)?;
+				.unpack(unpack_args.out, !unpack_args.no_progress)?;
 		},
 		Commands::ListSources(list_sources_args) => {
 			let archive = backy::Archive::new(list_sources_args.archive, key)?;

@@ -2,14 +2,36 @@ use std::borrow::Cow;
 
 use indicatif::{MultiProgress, ProgressBar, ProgressFinish, ProgressStyle};
 
-pub struct ProgressDisplay {
+pub trait ProgressDisplay: Sync {
+	fn new_tracker(&self, label: Cow<'static, str>, total_progress: u64) -> Box<dyn ProgressTracker + '_>;
+}
+
+pub trait ProgressTracker {
+	fn advance(&self, amount: u64);
+}
+
+pub struct NoopProgressDisplay;
+
+impl ProgressDisplay for NoopProgressDisplay {
+	fn new_tracker(&self, _label: Cow<'static, str>, _total_progress: u64) -> Box<dyn ProgressTracker + '_> {
+		Box::new(NoopTracker)
+	}
+}
+
+struct NoopTracker;
+
+impl ProgressTracker for NoopTracker {
+	fn advance(&self, _amount: u64) { }
+}
+
+pub struct TerminalProgressDisplay {
 	style: ProgressStyle,
 	finished_style: ProgressStyle,
 	progress_bars: MultiProgress,
 	total_progress: ProgressBar,
 }
 
-impl ProgressDisplay {
+impl TerminalProgressDisplay {
 	pub fn new(total_progress: u64) -> Self {
 		let total_style = ProgressStyle::with_template("{prefix} ({binary_bytes_per_sec} | {eta} remaining):  [{wide_bar:.blue/blue}]  {percent}% ").expect("should be valid")
 			.progress_chars("##-");
@@ -32,8 +54,10 @@ impl ProgressDisplay {
 			total_progress,
 		}
 	}
-	
-	pub fn new_tracker(&self, label: impl Into<Cow<'static, str>>, total_progress: u64) -> ProgressTracker {
+}
+
+impl ProgressDisplay for TerminalProgressDisplay {
+	fn new_tracker(&self, label: Cow<'static, str>, total_progress: u64) -> Box<dyn ProgressTracker + '_> {
 		let progress = ProgressBar::new(total_progress)
 			.with_finish(ProgressFinish::AndLeave)
 			.with_style(self.style.clone())
@@ -41,22 +65,22 @@ impl ProgressDisplay {
 		self.progress_bars.insert_from_back(1, progress.clone());
 		progress.tick();
 		
-		ProgressTracker {
+		Box::new(TerminalTracker {
 			display: self,
 			progress,
 			total_progress,
-		}
+		})
 	}
 }
 
-pub struct ProgressTracker<'a> {
-	display: &'a ProgressDisplay,
+struct TerminalTracker<'a> {
+	display: &'a TerminalProgressDisplay,
 	progress: ProgressBar,
 	total_progress: u64,
 }
 
-impl ProgressTracker<'_> {
-	pub fn advance(&self, amount: u64) {
+impl ProgressTracker for TerminalTracker<'_> {
+	fn advance(&self, amount: u64) {
 		self.display.total_progress.inc(amount);
 		self.progress.inc(amount);
 		

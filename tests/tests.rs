@@ -241,7 +241,7 @@ fn pack_archive(archive_description: ArchiveDescription) {
 		.collect();
 	let out = ARCHIVES_DIR.join(format!("{}.bky", archive_description.name));
 	
-	backy::pack(sources, out, *KEY, None).unwrap();
+	backy::pack(sources, out, *KEY, None, false).unwrap();
 }
 
 trait TestArchive {
@@ -277,7 +277,7 @@ struct UnpackTest;
 impl TestArchive for UnpackTest {
 	fn test_archive(&self, archive: &mut Archive) {
 		let destination = UNPACK_DIR.join(archive.description.name);
-		archive.archive.unpack(&destination).unwrap();
+		archive.archive.unpack(&destination, false).unwrap();
 		
 		for source in archive.description.sources() {
 			let src = SOURCES_DIR.join(source.name);

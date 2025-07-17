@@ -4,11 +4,11 @@ use anyhow::{anyhow, bail, Context};
 use hashing_reader::HashingReader;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 
-use crate::{crypto::{generate_iv, EncryptWriter, Key, IV}, header::{Flags, HeaderBuilder}, index::{Contents, Index, Sources}, progress::{ProgressDisplay, ProgressTracker}, Source, BKY_HEADER};
+use crate::{crypto::{generate_iv, EncryptWriter, Key, IV}, header::{Flags, HeaderBuilder}, index::{Contents, Index, Sources}, progress::{NoopProgressDisplay, ProgressDisplay, ProgressTracker, TerminalProgressDisplay}, Source, BKY_HEADER};
 
 mod hashing_reader;
 
-pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Option<u64>) -> anyhow::Result<()> {
+pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Option<u64>, display_progress: bool) -> anyhow::Result<()> {
 	// TODO: delete generated files when an error occurs?
 	
 	if sources.is_empty() {
@@ -33,7 +33,11 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Optio
 	
 	let index = Index::from_sources(sources, max_group_size).context("indexing source files")?;
 	
-	let progress_display = ProgressDisplay::new(index.total_size());
+	let progress_display: &dyn ProgressDisplay = if display_progress {
+		&TerminalProgressDisplay::new(index.total_size())
+	} else {
+		&NoopProgressDisplay
+	};
 	
 	match index.entries() {
 		Contents::Grouped(groups) => {
@@ -52,7 +56,7 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Optio
 						&group.sources,
 						key,
 						is_single_source,
-						progress_display.new_tracker(path.to_string_lossy().into_owned(), group.size)
+						progress_display.new_tracker(path.to_string_lossy().into_owned().into(), group.size)
 					)?;
 					
 					Ok(())
@@ -65,7 +69,7 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Optio
 				entries,
 				key,
 				is_single_source,
-				progress_display.new_tracker("Total", index.total_size())
+				progress_display.new_tracker("Total".into(), index.total_size())
 			)?;
 		},
 	}
@@ -78,7 +82,7 @@ fn pack_group(
 	sources: &Sources,
 	key: Key,
 	is_single_source: bool,
-	progress_tracker: ProgressTracker
+	progress_tracker: Box<dyn ProgressTracker + '_>
 ) -> anyhow::Result<()> {
 	let mut file = File::create_new(out).with_context(|| format!("creating archive file at {out:?}"))?;
 	
@@ -102,7 +106,7 @@ fn pack_group(
 	let skip_buffer = getrandom::fill_uninit(skip_buffer).map_err(|err| anyhow!(err).context("obtaining random bytes"))?;
 	encrypter.write_all(skip_buffer).with_context(|| format!("writing to archive file at {out:?}"))?;
 	
-	let pack_contents_result = pack_contents(progress_tracker, sources, &mut encrypter, &mut header)
+	let pack_contents_result = pack_contents(&*progress_tracker, sources, &mut encrypter, &mut header)
 		.with_context(|| format!("archiving contents to {out:?}"));
 	
 	// TODO: should this error still be returned?
@@ -123,7 +127,7 @@ fn pack_group(
 }
 
 fn pack_contents(
-	progress_tracker: ProgressTracker,
+	progress_tracker: &(dyn ProgressTracker + '_),
 	sources: &Sources,
 	mut writer: impl Write,
 	header: &mut HeaderBuilder

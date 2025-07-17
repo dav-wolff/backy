@@ -111,6 +111,7 @@ fn index_files(sources: Vec<Source>) -> anyhow::Result<(Vec<SourceEntry>, u64)> 
 			continue;
 		}
 		
+		// TODO: make optional, like progress display
 		println!("Indexing files in {}...", source.path.to_string_lossy());
 		
 		let mut source_size = 0;
@@ -136,6 +137,7 @@ fn index_files(sources: Vec<Source>) -> anyhow::Result<(Vec<SourceEntry>, u64)> 
 		total_size += source_size;
 		let files_count = index.len() - prev_index_len;
 		prev_index_len = index.len();
+		// TODO: make optional, like progress display
 		println!("Found {files_count} files with a total size of {}.", format(source_size));
 	}
 	

@@ -3,7 +3,7 @@ use std::{fs::{self, File}, io::{self, Read}, path::{Path, PathBuf}};
 use anyhow::{bail, ensure, Context};
 use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
 
-use crate::{crypto::Key, index::EntryPath, progress::ProgressDisplay};
+use crate::{crypto::Key, index::EntryPath, progress::{NoopProgressDisplay, ProgressDisplay, TerminalProgressDisplay}};
 
 mod sub_archive;
 use sub_archive::SubArchive;
@@ -59,18 +59,22 @@ impl Archive {
 		})
 	}
 	
-	pub fn unpack(&mut self, out_dir: impl AsRef<Path>) -> anyhow::Result<()> {
+	pub fn unpack(&mut self, out_dir: impl AsRef<Path>, display_progress: bool) -> anyhow::Result<()> {
 		let out_dir = out_dir.as_ref();
 		
 		let total_size = self.sub_archives.iter()
 			.map(|data| data.size)
 			.sum();
-		let progress_display = ProgressDisplay::new(total_size);
+		let progress_display: &dyn ProgressDisplay = if display_progress {
+			&TerminalProgressDisplay::new(total_size)
+		} else {
+			&NoopProgressDisplay
+		};
 		
 		self.sub_archives.par_iter_mut()
 			// TODO: fail early
 			.try_for_each(|SubArchiveData { name, size, sub_archive }| -> anyhow::Result<()> {
-				let progress_tracker = progress_display.new_tracker(name.clone(), *size - sub_archive.contents_start());
+				let progress_tracker = progress_display.new_tracker(name.clone().into(), *size - sub_archive.contents_start());
 				let is_single_source = sub_archive.is_single_source();
 				
 				sub_archive.for_each_file(|source, path, size, mut reader| {
