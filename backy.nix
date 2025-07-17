@@ -5,7 +5,9 @@
 let
 	src = with lib; cleanSourceWith {
 		src = craneLib.path ./.;
-		filter = craneLib.filterCargoSources;
+		filter = path: type:
+			(hasInfix "/test_sources/" path) ||
+			(craneLib.filterCargoSources path type);
 	};
 	
 	nameVersion = craneLib.crateNameFromCargoToml { cargoToml = ./Cargo.toml; };
