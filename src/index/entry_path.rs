@@ -15,6 +15,7 @@ impl EntryPath {
 	}
 	
 	// TODO: is this a false positive?
+	// EntryPath is neither re-exported from lib.rs, nor is the index module public in lib.rs
 	#[expect(private_interfaces)]
 	pub fn new(source: &Source, path: &Path) -> anyhow::Result<Self> {
 		Ok(Self(
@@ -32,6 +33,8 @@ impl EntryPath {
 		Ok(Self(string))
 	}
 	
+	// TODO: same as above, is this a false positive?
+	#[expect(private_interfaces)]
 	pub fn in_source(&self, source: &Source) -> PathBuf {
 		source.path.join(&self.0)
 	}
