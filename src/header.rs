@@ -166,7 +166,7 @@ impl<'a> HeaderBuilder<'a> {
 }
 
 #[derive(Debug)]
-pub struct Entry {
+pub struct FileInfo {
 	pub path: EntryPath,
 	pub hash: Hash,
 	pub position: u64,
@@ -176,7 +176,7 @@ pub struct Entry {
 #[derive(Debug)]
 pub struct Header {
 	flags: Flags,
-	entries: BTreeMap<String, Vec<Entry>>,
+	entries: BTreeMap<String, Vec<FileInfo>>,
 }
 
 impl Header {
@@ -194,7 +194,7 @@ impl Header {
 		// sources
 		// TODO: use SourceID newtype?
 		let mut position = 0;
-		let mut entries: BTreeMap<String, Vec<Entry>> = BTreeMap::new();
+		let mut entries: BTreeMap<String, Vec<FileInfo>> = BTreeMap::new();
 		for _ in 0..source_count {
 			// read: id length, id, entry count
 			let id = read_slice(&mut reader)?;
@@ -205,14 +205,14 @@ impl Header {
 			let entry_count = read_u32(&mut reader)?;
 			
 			// entries
-			let mut source_entries: Vec<Entry> = Vec::with_capacity(entry_count as usize);
+			let mut source_entries: Vec<FileInfo> = Vec::with_capacity(entry_count as usize);
 			for _ in 0..entry_count {
 				// read: hash, size, path_length, path
 				let hash = Hash::from_bytes(read_bytes(&mut reader)?);
 				let size = read_u64(&mut reader)?;
 				let path = EntryPath::from_bytes(read_slice(&mut reader)?)?;
 				
-				source_entries.push(Entry {
+				source_entries.push(FileInfo {
 					hash,
 					path,
 					size,
@@ -242,7 +242,7 @@ impl Header {
 		self.flags
 	}
 	
-	pub fn entries(&self) -> &BTreeMap<String, Vec<Entry>> {
+	pub fn entries(&self) -> &BTreeMap<String, Vec<FileInfo>> {
 		&self.entries
 	}
 }

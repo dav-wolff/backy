@@ -1,6 +1,6 @@
 // TODO: pack archives with multiple subarchives, run tests on entire archives or individual subarchives
 
-use std::{fs, io::{self, Read}, path::{Path, PathBuf}, sync::LazyLock};
+use std::{fs::{self, OpenOptions}, io::{self, Read, Seek, Write}, path::{Path, PathBuf}, sync::LazyLock};
 
 use backy::Key;
 use base64::{prelude::BASE64_STANDARD, Engine as _};
@@ -125,6 +125,18 @@ impl ArchiveDescription {
 	fn is_single_source(self) -> bool {
 		self.source_names.is_one()
 	}
+	
+	fn archive_path(self) -> PathBuf {
+		ARCHIVES_DIR.join(format!("{}.bky", self.name))
+	}
+	
+	fn corrupt_archive_path(self) -> PathBuf {
+		CORRUPT_ARCHIVES_DIR.join(format!("{}.bky", self.name))
+	}
+	
+	fn unpack_path(self) -> PathBuf {
+		UNPACK_DIR.join(self.name)
+	}
 }
 
 const KEY_TEXT: &str = "d6k//cJHeIXNlYn8ip1no0MDVWYBxZCEU/RwIzR5cMY=";
@@ -138,22 +150,19 @@ static KEY: LazyLock<Key> = LazyLock::new(|| {
 static SOURCES_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
 	Path::new(env!("CARGO_MANIFEST_DIR")).join("test_sources")
 });
-static ARCHIVES_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
-	let archives_dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("archives");
-	if let Err(err) = fs::remove_dir_all(&archives_dir) {
+
+fn cleaned_dir(name: &'static str) -> PathBuf {
+	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
+	if let Err(err) = fs::remove_dir_all(&dir) {
 		assert!(err.kind() == io::ErrorKind::NotFound);
-	};
-	fs::create_dir(&archives_dir).unwrap();
-	archives_dir
-});
-static UNPACK_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
-	let unpack_dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("unpacked_archives");
-	if let Err(err) = fs::remove_dir_all(&unpack_dir) {
-		assert!(err.kind() == io::ErrorKind::NotFound);
-	};
-	fs::create_dir(&unpack_dir).unwrap();
-	unpack_dir
-});
+	}
+	fs::create_dir(&dir).unwrap();
+	dir
+}
+
+static ARCHIVES_DIR: LazyLock<PathBuf> = LazyLock::new(|| cleaned_dir("archives"));
+static UNPACK_DIR: LazyLock<PathBuf> = LazyLock::new(|| cleaned_dir("unpacked_archives"));
+static CORRUPT_ARCHIVES_DIR: LazyLock<PathBuf> = LazyLock::new(|| cleaned_dir("corrupted_archives"));
 
 // TODO: empty directory + other generated?
 const SOURCES: &[SourceDescription] = &[
@@ -205,7 +214,7 @@ struct Archive {
 
 impl Archive {
 	fn load(description: ArchiveDescription) -> Self {
-		let archive = backy::Archive::new(ARCHIVES_DIR.join(format!("{}.bky", description.name)), *KEY).unwrap();
+		let archive = backy::Archive::new(description.archive_path(), *KEY).unwrap();
 		Self {
 			description,
 			archive,
@@ -218,6 +227,8 @@ const TESTS: &[&dyn TestArchive] = &[
 	&ListSourcesTest,
 	&UnpackTest,
 	&GetTest,
+	&CheckTest,
+	&FailedCheckTest,
 ];
 
 #[test]
@@ -239,9 +250,8 @@ fn pack_archive(archive_description: ArchiveDescription) {
 	let sources = archive_description.source_names.into_iter()
 		.map(|source_name| SOURCES_DIR.join(source_name))
 		.collect();
-	let out = ARCHIVES_DIR.join(format!("{}.bky", archive_description.name));
 	
-	backy::pack(sources, out, *KEY, None, false).unwrap();
+	backy::pack(sources, archive_description.archive_path(), *KEY, None, false).unwrap();
 }
 
 trait TestArchive {
@@ -276,7 +286,7 @@ struct UnpackTest;
 
 impl TestArchive for UnpackTest {
 	fn test_archive(&self, archive: &mut Archive) {
-		let destination = UNPACK_DIR.join(archive.description.name);
+		let destination = archive.description.unpack_path();
 		archive.archive.unpack(&destination, false).unwrap();
 		
 		for source in archive.description.sources() {
@@ -310,5 +320,47 @@ impl TestArchive for GetTest {
 				assert_eq!(content, file.content);
 			}
 		}
+	}
+}
+
+struct CheckTest;
+
+impl TestArchive for CheckTest {
+	fn test_archive(&self, archive: &mut Archive) {
+		assert!(archive.archive.check_integrity(false).unwrap())
+	}
+}
+
+struct FailedCheckTest;
+
+impl TestArchive for FailedCheckTest {
+	fn test_archive(&self, archive: &mut Archive) {
+		let content_size: u64 = archive.description.files()
+			.map(|file| file.content.len() as u64)
+			.sum();
+		
+		// can't corrupt an archive with no content
+		if content_size == 0 {
+			return;
+		}
+		
+		let corrupt_archive_path = archive.description.corrupt_archive_path();
+		fs::copy(archive.description.archive_path(), &corrupt_archive_path).unwrap();
+		
+		let mut file = OpenOptions::new()
+			.read(true)
+			.write(true)
+			.open(&corrupt_archive_path).unwrap();
+		// seek to the middle of the content
+		file.seek(io::SeekFrom::End(-(content_size as i64 / 2 + 1))).unwrap();
+		let mut buf = [0];
+		file.read_exact(&mut buf).unwrap();
+		buf[0] = buf[0].wrapping_add(1);
+		file.seek(io::SeekFrom::Current(-1)).unwrap();
+		file.write_all(&buf).unwrap();
+		
+		let mut corrupt_archive = backy::Archive::new(corrupt_archive_path, *KEY).unwrap();
+		
+		assert!(!corrupt_archive.check_integrity(false).unwrap());
 	}
 }

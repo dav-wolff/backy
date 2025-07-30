@@ -2,7 +2,7 @@ use std::{borrow::Borrow, io::{self, Read, Seek, SeekFrom}};
 
 use anyhow::{ensure, Context};
 
-use crate::{crypto::{DecryptReader, IV}, header::Header, index::EntryPath, Key, BKY_HEADER};
+use crate::{crypto::{DecryptReader, IV}, header::{self, Header}, index::EntryPath, Key, BKY_HEADER};
 
 pub struct SubArchive<R: Read + Seek> {
 	decrypter: DecryptReader<R>,
@@ -71,16 +71,17 @@ impl<R: Read + Seek> SubArchive<R> {
 		Ok(Some((&mut self.decrypter).take(entry.size)))
 	}
 	
-	pub fn for_each_file<F>(&mut self, mut callback: F) -> anyhow::Result<()>
+	pub fn for_each_file<F, E>(&mut self, mut callback: F) -> Result<(), E>
 	where
-		F: FnMut(&str, &EntryPath, u64, io::Take<&mut DecryptReader<R>>) -> anyhow::Result<()>,
+		F: FnMut(&str, &header::FileInfo, io::Take<&mut DecryptReader<R>>) -> Result<(), E>,
+		E: From<anyhow::Error>,
 	{
-		self.decrypter.seek(SeekFrom::Start(self.contents_start))?;
+		self.decrypter.seek(SeekFrom::Start(self.contents_start)).context("seeking to start of contents")?;
 		
 		for (source, entries) in self.header.entries() {
 			for entry in entries {
 				let reader = (&mut self.decrypter).take(entry.size);
-				callback(source, &entry.path, entry.size, reader)?;
+				callback(source, entry, reader)?;
 				// TODO: ensure that reader is fully read?
 			}
 		}

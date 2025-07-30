@@ -36,6 +36,8 @@ enum Commands {
 	Pack(PackArgs),
 	/// Unpacks a backy archive into its sources
 	Unpack(UnpackArgs),
+	/// Checks the integrity of a backy archive
+	Check(CheckArgs),
 	/// Lists all sources contained in a backy archive
 	ListSources(ListSourcesArgs),
 	/// Lists all files contained in a backy archive
@@ -71,6 +73,15 @@ struct UnpackArgs {
 	/// Directory to unpack the sources into
 	#[arg(short, long, default_value = ".")]
 	out: PathBuf,
+	/// Don't display a progress tracker
+	#[arg(long)]
+	no_progress: bool,
+}
+
+#[derive(Args, Clone, Debug)]
+struct CheckArgs {
+	/// The backy archive to check (can be a file or directory)
+	archive: PathBuf,
 	/// Don't display a progress tracker
 	#[arg(long)]
 	no_progress: bool,
@@ -122,6 +133,17 @@ fn main() -> anyhow::Result<()> {
 		Commands::Unpack(unpack_args) => {
 			backy::Archive::new(unpack_args.archive, key)?
 				.unpack(unpack_args.out, !unpack_args.no_progress)?;
+		},
+		Commands::Check(check_args) => {
+			let is_intact = backy::Archive::new(check_args.archive, key)?
+				.check_integrity(!check_args.no_progress)?;
+			
+			if is_intact {
+				println!("Archive integrity is intact");
+			} else {
+				eprintln!("Archive is corrupted");
+				std::process::exit(1);
+			}
 		},
 		Commands::ListSources(list_sources_args) => {
 			let archive = backy::Archive::new(list_sources_args.archive, key)?;

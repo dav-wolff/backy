@@ -59,14 +59,17 @@ impl Archive {
 		})
 	}
 	
+	fn total_size(&self) -> u64 {
+		self.sub_archives.iter()
+			.map(|data| data.size)
+			.sum()
+	}
+	
 	pub fn unpack(&mut self, out_dir: impl AsRef<Path>, display_progress: bool) -> anyhow::Result<()> {
 		let out_dir = out_dir.as_ref();
 		
-		let total_size = self.sub_archives.iter()
-			.map(|data| data.size)
-			.sum();
 		let progress_display: &dyn ProgressDisplay = if display_progress {
-			&TerminalProgressDisplay::new(total_size)
+			&TerminalProgressDisplay::new(self.total_size())
 		} else {
 			&NoopProgressDisplay
 		};
@@ -77,7 +80,8 @@ impl Archive {
 				let progress_tracker = progress_display.new_tracker(name.clone().into(), *size - sub_archive.contents_start());
 				let is_single_source = sub_archive.is_single_source();
 				
-				sub_archive.for_each_file(|source, path, size, mut reader| {
+				sub_archive.for_each_file(|source, file_info, mut reader| -> anyhow::Result<()> {
+					let path = &file_info.path;
 					let dest = if path.as_str().is_empty() { // source is a file
 						out_dir.join(source)
 					} else if is_single_source {
@@ -91,7 +95,7 @@ impl Archive {
 					let mut out = File::create(&dest).with_context(|| format!("creating file at {:?}", dest))?;
 					io::copy(&mut reader, &mut out).with_context(|| format!("unpacking file to {:?}", dest))?;
 					
-					progress_tracker.advance(size);
+					progress_tracker.advance(file_info.size);
 					
 					Ok(())
 				})?;
@@ -100,6 +104,51 @@ impl Archive {
 			})?;
 		
 		Ok(())
+	}
+	
+	pub fn check_integrity(&mut self, display_progress: bool) -> anyhow::Result<bool> {
+		enum CheckIntegrityError {
+			Integrity,
+			Other(anyhow::Error),
+		}
+		
+		impl From<anyhow::Error> for CheckIntegrityError {
+			fn from(value: anyhow::Error) -> Self {
+				Self::Other(value)
+			}
+		}
+		
+		let progress_display: &dyn ProgressDisplay = if display_progress {
+			&TerminalProgressDisplay::new(self.total_size())
+		} else {
+			&NoopProgressDisplay
+		};
+		
+		let result = self.sub_archives.par_iter_mut()
+			.try_for_each(|SubArchiveData { name, size, sub_archive }| {
+				let progress_tracker = progress_display.new_tracker(name.clone().into(), *size - sub_archive.contents_start());
+				
+				sub_archive.for_each_file(|source, file_info, mut reader| -> Result<(), CheckIntegrityError> {
+					let mut hasher = blake3::Hasher::new();
+					io::copy(&mut reader, &mut hasher)
+						.with_context(|| format!("reading file from {:?} at {:?}", source, file_info.path))
+						.with_context(|| format!("reading subarchive {:?}", name))?;
+					
+					progress_tracker.advance(file_info.size);
+					
+					if hasher.finalize() != file_info.hash {
+						Err(CheckIntegrityError::Integrity)
+					} else {
+						Ok(())
+					}
+				})
+			});
+		
+		match result {
+			Ok(()) => Ok(true),
+			Err(CheckIntegrityError::Integrity) => Ok(false),
+			Err(CheckIntegrityError::Other(err)) => Err(err),
+		}
 	}
 	
 	// FIX: outputs duplicate sources
