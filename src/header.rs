@@ -1,8 +1,15 @@
-use std::{collections::BTreeMap, io::{self, Read, Seek, SeekFrom, Write}};
+use std::{
+	collections::BTreeMap,
+	io::{self, Read, Seek, SeekFrom, Write},
+};
+use blake3::{
+	Hash,
+};
 
-use blake3::Hash;
-
-use crate::{index::{EntryPath, Sources}, Source};
+use crate::{
+	Source,
+	index::{EntryPath, Sources},
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Flags {

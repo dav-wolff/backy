@@ -1,4 +1,6 @@
-use std::io::{self, Read};
+use std::{
+	io::{self, Read},
+};
 
 pub struct HashingReader<R: Read> {
 	inner: R,

@@ -1,9 +1,22 @@
-use std::{fs::{self, File}, io::{self, Read}, path::{Path, PathBuf}};
+use std::{
+	fs::{self, File},
+	io::{self, Read},
+	path::{Path, PathBuf},
+};
+use anyhow::{
+	bail,
+	ensure,
+	Context as _,
+};
+use rayon::{
+	iter::{IntoParallelRefMutIterator, ParallelIterator},
+};
 
-use anyhow::{bail, ensure, Context};
-use rayon::iter::{IntoParallelRefMutIterator, ParallelIterator};
-
-use crate::{crypto::Key, index::EntryPath, progress::{NoopProgressDisplay, ProgressDisplay, TerminalProgressDisplay}};
+use crate::{
+	crypto::Key,
+	index::EntryPath,
+	progress::{NoopProgressDisplay, ProgressDisplay, TerminalProgressDisplay},
+};
 
 mod sub_archive;
 use sub_archive::SubArchive;

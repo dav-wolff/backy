@@ -1,9 +1,26 @@
-use std::{fs::{self, File}, io::{self, Seek, SeekFrom, Write}, path::{Path, PathBuf}};
+use std::{
+	fs::{self, File},
+	io::{self, Seek, SeekFrom, Write},
+	path::{Path, PathBuf},
+};
+use anyhow::{
+	anyhow,
+	bail,
+	Context as _,
+};
+use rayon::{
+	iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator},
+};
 
-use anyhow::{anyhow, bail, Context};
-use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
-
-use crate::{crypto::{generate_iv, EncryptWriter, Key, IV}, hashing_reader::HashingReader, header::{Flags, HeaderBuilder}, index::{Contents, Index, Sources}, progress::{NoopProgressDisplay, ProgressDisplay, ProgressTracker, TerminalProgressDisplay}, Source, BKY_HEADER};
+use crate::{
+	BKY_HEADER,
+	Source,
+	progress::{NoopProgressDisplay, ProgressDisplay, ProgressTracker, TerminalProgressDisplay},
+	index::{Contents, Index, Sources},
+	crypto::{generate_iv, EncryptWriter, Key, IV},
+	hashing_reader::HashingReader,
+	header::{Flags, HeaderBuilder},
+};
 
 pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Option<u64>, display_progress: bool) -> anyhow::Result<()> {
 	// TODO: delete generated files when an error occurs?

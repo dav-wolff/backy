@@ -1,6 +1,12 @@
-use std::borrow::Cow;
-
-use indicatif::{MultiProgress, ProgressBar, ProgressFinish, ProgressStyle};
+use std::{
+	borrow::Cow,
+};
+use indicatif::{
+	MultiProgress,
+	ProgressBar,
+	ProgressFinish,
+	ProgressStyle,
+};
 
 pub trait ProgressDisplay: Sync {
 	fn new_tracker(&self, label: Cow<'static, str>, total_progress: u64) -> Box<dyn ProgressTracker + '_>;

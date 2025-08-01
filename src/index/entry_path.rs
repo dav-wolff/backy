@@ -1,8 +1,15 @@
-use std::{fmt::Display, path::Path};
+use std::{
+	fmt::Display,
+	path::{Path, PathBuf},
+};
+use anyhow::{
+	anyhow,
+	Context as _,
+};
 
-use anyhow::anyhow;
-
-use super::*;
+use crate::{
+	Source,
+};
 
 // TODO: should this contain a string? Paths should be UTF-8 for compatibility
 /// Relative path of an entry

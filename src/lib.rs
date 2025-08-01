@@ -1,13 +1,16 @@
 #![forbid(unsafe_code)]
 #![deny(non_snake_case)]
 
-use std::{path::Path, sync::Arc};
+use std::{
+	path::Path,
+	sync::Arc,
+};
 
 mod index;
 mod progress;
-
 mod header;
 mod hashing_reader;
+
 mod crypto;
 pub use crypto::{generate_key, Key};
 

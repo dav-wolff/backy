@@ -1,9 +1,22 @@
-use std::{borrow::Borrow, io::{self, Read, Seek, SeekFrom}};
+use std::{
+	borrow::Borrow,
+	io::{self, Read, Seek, SeekFrom},
+};
+use anyhow::{
+	ensure,
+	Context as _,
+};
+use blake3::{
+	Hash,
+};
 
-use anyhow::{ensure, Context};
-use blake3::Hash;
-
-use crate::{crypto::{DecryptReader, IV}, hashing_reader::HashingReader, header::{self, Header}, index::EntryPath, Key, BKY_HEADER};
+use crate::{
+	BKY_HEADER,
+	crypto::{Key, DecryptReader, IV},
+	hashing_reader::HashingReader,
+	header::{self, Header},
+	index::EntryPath,
+};
 
 pub struct SubArchive<R: Read + Seek> {
 	decrypter: DecryptReader<R>,

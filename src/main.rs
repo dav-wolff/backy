@@ -1,12 +1,30 @@
 #![forbid(unsafe_code)]
 #![deny(non_snake_case)]
 
-use std::{fs, io::{self, Write}, path::PathBuf};
+use std::{
+	fs,
+	io::{self, Write},
+	path::PathBuf,
+};
+use anyhow::{
+	ensure,
+	Context as _,
+};
+use base64::{
+	prelude::BASE64_STANDARD,
+	Engine
+};
+use clap::{
+	command,
+	Args,
+	Parser,
+	Subcommand
+};
 
-use anyhow::{ensure, Context};
-use backy::Key;
-use base64::{prelude::BASE64_STANDARD, Engine};
-use clap::{command, Args, Parser, Subcommand};
+use backy::{
+	Archive,
+	Key,
+};
 
 fn parse_size(arg: &str) -> Result<u64, parse_size::Error> {
 	parse_size::Config::new()
@@ -131,11 +149,11 @@ fn main() -> anyhow::Result<()> {
 			backy::pack(pack_args.sources, pack_args.out, key, pack_args.size, !pack_args.no_progress)?;
 		},
 		Commands::Unpack(unpack_args) => {
-			backy::Archive::new(unpack_args.archive, key)?
+			Archive::new(unpack_args.archive, key)?
 				.unpack(unpack_args.out, !unpack_args.no_progress)?;
 		},
 		Commands::Check(check_args) => {
-			let is_intact = backy::Archive::new(check_args.archive, key)?
+			let is_intact = Archive::new(check_args.archive, key)?
 				.check_integrity(!check_args.no_progress)?;
 			
 			if is_intact {
@@ -146,13 +164,13 @@ fn main() -> anyhow::Result<()> {
 			}
 		},
 		Commands::ListSources(list_sources_args) => {
-			let archive = backy::Archive::new(list_sources_args.archive, key)?;
+			let archive = Archive::new(list_sources_args.archive, key)?;
 			for source in archive.sources() {
 				println!("{source}");
 			}
 		},
 		Commands::List(list_args) => {
-			let archive = backy::Archive::new(list_args.archive, key)?;
+			let archive = Archive::new(list_args.archive, key)?;
 			
 			if let Some(source) = &list_args.source {
 				ensure!(archive.sources().any(|s| s == source), "source {source} is not contained in this archive");
@@ -172,7 +190,7 @@ fn main() -> anyhow::Result<()> {
 			stdout.flush().context("writing to stdout")?;
 		},
 		Commands::Get(get_args) => {
-			let mut archive = backy::Archive::new(get_args.archive, key)?;
+			let mut archive = Archive::new(get_args.archive, key)?;
 			
 			let mut stdout = io::stdout().lock();
 			let mut reader = archive.get_file(get_args.source.as_ref().map(AsRef::as_ref), &get_args.path)?.unwrap();

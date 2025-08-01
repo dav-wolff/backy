@@ -1,7 +1,15 @@
-use std::io::{self, Read, Seek, SeekFrom, Write};
-
-use anyhow::anyhow;
-use chacha20::{cipher::{consts::{U24, U32}, generic_array::GenericArray, KeyIvInit, StreamCipher, StreamCipherSeek}, XChaCha20};
+use std::{
+	io::{self, Read, Seek, SeekFrom, Write},
+};
+use anyhow::{
+	anyhow,
+};
+use chacha20::{
+	XChaCha20,
+	cipher::{KeyIvInit, StreamCipher, StreamCipherSeek},
+	cipher::consts::{U24, U32},
+	cipher::generic_array::GenericArray,
+};
 
 pub type Key = GenericArray<u8, U32>;
 pub type IV = GenericArray<u8, U24>;

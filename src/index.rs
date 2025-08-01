@@ -1,12 +1,21 @@
 // TODO: should this be a submodule of pack?
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+	collections::BTreeMap,
+};
+use anyhow::{
+	Context as _,
+};
+use either::{
+	Either,
+};
+use walkdir::{
+	WalkDir,
+};
 
-use anyhow::Context;
-use either::Either;
-use walkdir::WalkDir;
-
-use crate::Source;
+use crate::{
+	Source,
+};
 
 mod entry_path;
 pub use entry_path::EntryPath;

@@ -1,10 +1,22 @@
 // TODO: pack archives with multiple subarchives, run tests on entire archives or individual subarchives
 
-use std::{fs::{self, OpenOptions}, io::{self, Read, Seek, Write}, path::{Path, PathBuf}, sync::LazyLock};
+use std::{
+	fs::{self, OpenOptions},
+	io::{self, Read, Seek, Write},
+	path::{Path, PathBuf},
+	sync::LazyLock,
+};
+use base64::{
+	prelude::BASE64_STANDARD,
+	Engine as _,
+};
+use either::{
+	Either,
+};
 
-use backy::Key;
-use base64::{prelude::BASE64_STANDARD, Engine as _};
-use either::Either;
+use backy::{
+	Key,
+};
 
 #[derive(Clone, Copy, Debug)]
 enum OneOrMany<T>
