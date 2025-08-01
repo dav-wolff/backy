@@ -34,7 +34,7 @@ where
 	fn into_iter(self) -> Self::IntoIter {
 		match self {
 			Self::One(item) => Either::Left(std::iter::once(item)),
-			Self::Many(items) => Either::Right(items.into_iter().copied()),
+			Self::Many(items) => Either::Right(items.iter().copied()),
 		}
 	}
 }

@@ -20,7 +20,7 @@ impl EntryPath {
 	pub fn new(source: &Source, path: &Path) -> anyhow::Result<Self> {
 		Ok(Self(
 			path.strip_prefix(&source.path).expect("path must be inside source")
-				.to_str().with_context(|| format!("path {:?} is not representable as UTF-8", path))?
+				.to_str().with_context(|| format!("path {path:?} is not representable as UTF-8"))?
 				.to_owned()
 		))
 	}

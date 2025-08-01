@@ -14,9 +14,9 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Optio
 	
 	// TODO: create separate ids for folders with same name
 	let sources: Vec<_> = sources.into_iter()
-		.map(|path| path.canonicalize().with_context(|| format!("canonicalizing path {:?}", path)))
+		.map(|path| path.canonicalize().with_context(|| format!("canonicalizing path {path:?}")))
 		.map(|path_result| path_result.and_then(|path| {
-			let file_name = path.file_name().ok_or_else(|| anyhow!("invalid path: {:?}", path))?;
+			let file_name = path.file_name().ok_or_else(|| anyhow!("invalid path: {path:?}"))?;
 			
 			Ok(Source {
 				id: file_name.to_string_lossy().into(),
@@ -39,7 +39,7 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Optio
 	match index.entries() {
 		Contents::Grouped(groups) => {
 			if !out.exists() {
-				fs::create_dir(&out).with_context(|| format!("creating out directory in {:?}", out))?;
+				fs::create_dir(&out).with_context(|| format!("creating out directory in {out:?}"))?;
 			}
 			
 			// TODO: fail early
@@ -137,9 +137,9 @@ fn pack_contents(
 			} else {
 				&*entry.path.in_source(source)
 			};
-			let file = File::open(path).with_context(|| format!("opening file at {:?}", path))?;
+			let file = File::open(path).with_context(|| format!("opening file at {path:?}"))?;
 			let mut hashing_reader = HashingReader::new(file);
-			let size = io::copy(&mut hashing_reader, &mut writer).with_context(|| format!("archiving file {:?}", path))?;
+			let size = io::copy(&mut hashing_reader, &mut writer).with_context(|| format!("archiving file {path:?}"))?;
 			// NOTE: only push the entry once it is complete as it still gets written to the header in case of an error
 			header.push_entry(source, size, hashing_reader.finalize());
 			

@@ -26,15 +26,15 @@ impl Archive {
 		}
 		
 		let sub_archives: Vec<SubArchiveData> = if path.is_dir() {
-			fs::read_dir(&path).with_context(|| format!("reading archive directory at {:?}", path))?
+			fs::read_dir(&path).with_context(|| format!("reading archive directory at {path:?}"))?
 				.map(|dir_entry| -> anyhow::Result<_> {
-					let dir_entry = dir_entry.with_context(|| format!("iterating entries in {:?}", path))?;
+					let dir_entry = dir_entry.with_context(|| format!("iterating entries in {path:?}"))?;
 					let entry_path = dir_entry.path();
-					ensure!(entry_path.is_file(), "subarchive at {:?} is not a file", entry_path);
-					let metadata = dir_entry.metadata().with_context(|| format!("querying metadata for {:?}", entry_path))?;
+					ensure!(entry_path.is_file(), "subarchive at {entry_path:?} is not a file");
+					let metadata = dir_entry.metadata().with_context(|| format!("querying metadata for {entry_path:?}"))?;
 					let size = metadata.len();
-					let file = File::open(&entry_path).with_context(|| format!("opening subarchive file at {:?}", entry_path))?;
-					let sub_archive = SubArchive::new(file, key).with_context(|| format!("parsing subarchive at {:?}", entry_path))?;
+					let file = File::open(&entry_path).with_context(|| format!("opening subarchive file at {entry_path:?}"))?;
+					let sub_archive = SubArchive::new(file, key).with_context(|| format!("parsing subarchive at {entry_path:?}"))?;
 					
 					Ok(SubArchiveData {
 						sub_archive,
@@ -44,10 +44,10 @@ impl Archive {
 				})
 				.collect::<Result<_, _>>()?
 		} else {
-			let metadata = path.metadata().with_context(|| format!("querying metadata for {:?}", path))?;
+			let metadata = path.metadata().with_context(|| format!("querying metadata for {path:?}"))?;
 			let size = metadata.len();
-			let file = File::open(&path).with_context(|| format!("opening archive file at {:?}", path))?;
-			let sub_archive = SubArchive::new(file, key).with_context(|| format!("parsing archive at {:?}", path))?;
+			let file = File::open(&path).with_context(|| format!("opening archive file at {path:?}"))?;
+			let sub_archive = SubArchive::new(file, key).with_context(|| format!("parsing archive at {path:?}"))?;
 			vec![SubArchiveData {
 				sub_archive,
 				size,
@@ -92,9 +92,9 @@ impl Archive {
 					};
 					
 					let parent = dest.parent().expect("must have a parent directory");
-					fs::create_dir_all(parent).with_context(|| format!("creating out directory in {:?}", parent))?;
-					let mut out = File::create(&dest).with_context(|| format!("creating file at {:?}", dest))?;
-					io::copy(&mut reader, &mut out).with_context(|| format!("unpacking file to {:?}", dest))?;
+					fs::create_dir_all(parent).with_context(|| format!("creating out directory in {parent:?}"))?;
+					let mut out = File::create(&dest).with_context(|| format!("creating file at {dest:?}"))?;
+					io::copy(&mut reader, &mut out).with_context(|| format!("unpacking file to {dest:?}"))?;
 					ensure!(!reader.is_corrupted(), "file {:?} in source {source} is corrupted", path.as_path());
 					
 					progress_tracker.advance(file_info.size);
@@ -134,8 +134,8 @@ impl Archive {
 					let mut reader = reader.into_inner();
 					let mut hasher = blake3::Hasher::new();
 					io::copy(&mut reader, &mut hasher)
-						.with_context(|| format!("reading file from {:?} at {:?}", source, file_info.path))
-						.with_context(|| format!("reading subarchive {:?}", name))?;
+						.with_context(|| format!("reading file from {source:?} at {:?}", file_info.path))
+						.with_context(|| format!("reading subarchive {name:?}"))?;
 					
 					progress_tracker.advance(file_info.size);
 					
