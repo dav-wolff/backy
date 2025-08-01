@@ -2,19 +2,18 @@ use std::{
 	borrow::Borrow,
 	io::{self, Read, Seek, SeekFrom},
 };
+
 use anyhow::{
 	ensure,
 	Context as _,
 };
-use blake3::{
-	Hash,
-};
 
 use crate::{
-	BKY_HEADER,
-	crypto::{Key, DecryptReader, IV},
+	BKY_HEADER
+	Key,
+	crypto::{DecryptReader, IV},
 	hashing_reader::HashingReader,
-	header::{self, Header},
+	header::{self, Header, FileHash, HeaderHash},
 	index::EntryPath,
 };
 
@@ -72,6 +71,17 @@ impl<R: Read + Seek> SubArchive<R> {
 			.map(|entry| entry.path.as_str())
 	}
 	
+	pub fn hash(&self) -> HeaderHash {
+		self.header.hash()
+	}
+	
+	pub fn file_hashes(&self) -> impl Iterator<Item = FileHash> {
+		self.header.entries()
+			.values()
+			.flatten()
+			.map(|entry| entry.hash)
+	}
+	
 	pub fn read_file<'s>(&'s mut self, source: &str, path: &EntryPath) -> anyhow::Result<Option<ArchiveReader<impl Read + use<'s, R>>>> {
 		let Some(source) = self.header.entries().get(source) else {
 			return Ok(None);
@@ -114,7 +124,7 @@ impl<R: Read + Seek> SubArchive<R> {
 
 pub struct ArchiveReader<R: Read> {
 	reader: HashingReader<R>,
-	expected_hash: Hash,
+	expected_hash: FileHash,
 }
 
 impl<R: Read> Read for ArchiveReader<R> {
@@ -125,7 +135,7 @@ impl<R: Read> Read for ArchiveReader<R> {
 
 impl<R: Read> ArchiveReader<R> {
 	pub fn is_corrupted(&self) -> bool {
-		self.reader.finalize() != self.expected_hash
+		self.reader.finalize() != *self.expected_hash
 	}
 	
 	pub fn into_inner(self) -> R {

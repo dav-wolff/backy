@@ -1,7 +1,8 @@
 // TODO: should this be a submodule of pack?
 
 use std::{
-	collections::BTreeMap,
+	collections::{BTreeMap, HashMap},
+	path::Path,
 };
 use anyhow::{
 	Context as _,
@@ -15,6 +16,9 @@ use walkdir::{
 
 use crate::{
 	Source,
+	Archive,
+	FileHash,
+	OriginHash,
 };
 
 mod entry_path;
@@ -26,14 +30,17 @@ pub struct Index {
 	entries: Contents,
 }
 
+pub type DuplicateFiles = BTreeMap<OriginHash, Vec<FileHash>>;
+
 #[derive(Debug)]
 pub enum Contents {
-	Simple(Sources),
+	Simple(Option<DuplicateFiles>, Sources),
 	Grouped(Vec<Group>),
 }
 
 #[derive(Debug)]
 pub struct Group {
+	pub duplicate_files: DuplicateFiles,
 	pub size: u64,
 	pub sources: Sources,
 }
@@ -78,12 +85,12 @@ struct SourceEntry {
 }
 
 impl Index {
-	pub fn from_sources(sources: Vec<Source>, max_group_size: Option<u64>) -> anyhow::Result<Self> {
-		let (entries, total_size) = index_files(sources)?;
+	pub fn from_sources(sources: Vec<Source>, parents: Vec<Archive>, max_group_size: Option<u64>) -> anyhow::Result<Self> {
+		let (entries, total_size, found_duplicates) = index_files(sources, parents)?;
 		
 		let entries = match max_group_size {
 			Some(max_size) => Contents::Grouped(group_files(entries, max_size)),
-			None => Contents::Simple(group_by_source(entries)),
+			None => Contents::Simple(found_duplicates, group_by_source(entries)),
 		};
 		
 		Ok(Self {
@@ -101,7 +108,58 @@ impl Index {
 	}
 }
 
-fn index_files(sources: Vec<Source>) -> anyhow::Result<(Vec<SourceEntry>, u64)> {
+// TODO: better name
+struct DuplicateChecker {
+	parent_entries: HashMap<FileHash, OriginHash>,
+	found_duplicates: BTreeMap<OriginHash, Vec<FileHash>>,
+}
+
+impl DuplicateChecker {
+	fn new(parents: Vec<Archive>) -> Self {
+		let parent_entries = parents.iter()
+			.flat_map(|archive| archive.file_hashes())
+			.flat_map(|(subarchive_hash, file_hashes)| {
+				file_hashes.map(move |hash| (hash, subarchive_hash))
+			})
+			.collect::<HashMap<_, _>>();
+		
+		Self {
+			parent_entries,
+			found_duplicates: BTreeMap::new(),
+		}
+	}
+	
+	/// Checks if the file at the given path is contained in the parent archives
+	/// and if so records it and returns true.
+	fn check_duplicate(&mut self, path: &Path) -> anyhow::Result<bool> {
+		let mut hasher = blake3::Hasher::new();
+		hasher.update_mmap_rayon(path).with_context(|| format!("hashing file {path:?}"))?;
+		let hash = FileHash(hasher.finalize());
+		
+		if let Some(subarchive_hash) = self.parent_entries.get(&hash) {
+			use std::collections::btree_map::Entry::*;
+			match self.found_duplicates.entry(*subarchive_hash) {
+				Occupied(mut entry) => {
+					entry.get_mut().push(hash);
+				},
+				Vacant(entry) => {
+					entry.insert(vec![hash]);
+				},
+			}
+			Ok(true)
+		} else {
+			Ok(false)
+		}
+	}
+}
+
+fn index_files(sources: Vec<Source>, parents: Vec<Archive>) -> anyhow::Result<(Vec<SourceEntry>, u64, Option<BTreeMap<OriginHash, Vec<FileHash>>>)> {
+	let mut duplicate_checker = if !parents.is_empty() {
+		Some(DuplicateChecker::new(parents))
+	} else {
+		None
+	};
+	
 	let format = humansize::make_format(humansize::BINARY);
 	let mut index = Vec::new();
 	
@@ -132,6 +190,12 @@ fn index_files(sources: Vec<Source>) -> anyhow::Result<(Vec<SourceEntry>, u64)> 
 				continue;
 			}
 			
+			if let Some(duplicate_checker) = &mut duplicate_checker
+				&& duplicate_checker.check_duplicate(entry.path())?
+			{
+				continue;
+			}
+			
 			let metadata = entry.metadata().with_context(|| format!("querying metadata for {:?}", entry.path()))?;
 			let size = metadata.len();
 			source_size += size;
@@ -150,7 +214,11 @@ fn index_files(sources: Vec<Source>) -> anyhow::Result<(Vec<SourceEntry>, u64)> 
 		println!("Found {files_count} files with a total size of {}.", format(source_size));
 	}
 	
-	Ok((index, total_size))
+	Ok((
+		index,
+		total_size,
+		duplicate_checker.map(|duplicate_checker| duplicate_checker.found_duplicates)
+	))
 }
 
 struct UnsortedGroup {

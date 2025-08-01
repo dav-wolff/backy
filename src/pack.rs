@@ -15,6 +15,8 @@ use rayon::{
 use crate::{
 	BKY_HEADER,
 	Source,
+	Archive,
+	FileHash,
 	progress::{NoopProgressDisplay, ProgressDisplay, ProgressTracker, TerminalProgressDisplay},
 	index::{Contents, Index, Sources},
 	crypto::{generate_iv, EncryptWriter, Key, IV},
@@ -22,7 +24,7 @@ use crate::{
 	header::{Flags, HeaderBuilder},
 };
 
-pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Option<u64>, display_progress: bool) -> anyhow::Result<()> {
+pub fn pack(sources: Vec<PathBuf>, parents: Vec<Archive>, out: PathBuf, key: Key, max_group_size: Option<u64>, display_progress: bool) -> anyhow::Result<()> {
 	// TODO: delete generated files when an error occurs?
 	
 	if sources.is_empty() {
@@ -45,7 +47,7 @@ pub fn pack(sources: Vec<PathBuf>, out: PathBuf, key: Key, max_group_size: Optio
 	
 	let is_single_source = sources.len() == 1;
 	
-	let index = Index::from_sources(sources, max_group_size).context("indexing source files")?;
+	let index = Index::from_sources(sources, parents, max_group_size).context("indexing source files")?;
 	
 	let progress_display: &dyn ProgressDisplay = if display_progress {
 		&TerminalProgressDisplay::new(index.total_size())
@@ -158,7 +160,7 @@ fn pack_contents(
 			let mut hashing_reader = HashingReader::new(file);
 			let size = io::copy(&mut hashing_reader, &mut writer).with_context(|| format!("archiving file {path:?}"))?;
 			// NOTE: only push the entry once it is complete as it still gets written to the header in case of an error
-			header.push_entry(source, size, hashing_reader.finalize());
+			header.push_entry(source, size, FileHash(hashing_reader.finalize()));
 			
 			// use entry.size, as this is the expected value necessary to add up to 100%
 			progress_tracker.advance(entry.size);

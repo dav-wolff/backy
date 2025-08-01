@@ -9,7 +9,11 @@ use blake3::{
 use crate::{
 	Source,
 	index::{EntryPath, Sources},
+	hashing_reader::HashingReader,
 };
+
+mod hash;
+pub use hash::*;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Flags {
@@ -48,7 +52,7 @@ impl Flags {
 #[derive(Debug)]
 struct Value {
 	size: u64,
-	hash: Hash,
+	hash: FileHash,
 }
 
 #[derive(Debug)]
@@ -82,7 +86,7 @@ impl<'a> HeaderBuilder<'a> {
 	/// # Panics
 	/// 
 	/// Panics if `source` was not included in the [`Sources`] passed to [`HeaderBuilder::new`].
-	pub fn push_entry(&mut self, source: &Source, size: u64, hash: Hash) {
+	pub fn push_entry(&mut self, source: &Source, size: u64, hash: FileHash) {
 		self.entries.get_mut(source).expect("source must be included in sources")
 			.push(Value {
 				size,
@@ -175,7 +179,7 @@ impl<'a> HeaderBuilder<'a> {
 #[derive(Debug)]
 pub struct FileInfo {
 	pub path: EntryPath,
-	pub hash: Hash,
+	pub hash: FileHash,
 	pub position: u64,
 	pub size: u64,
 }
@@ -184,19 +188,22 @@ pub struct FileInfo {
 pub struct Header {
 	flags: Flags,
 	entries: BTreeMap<String, Vec<FileInfo>>,
+	hash: HeaderHash,
 }
 
 impl Header {
 	pub fn read_from(mut reader: impl Read + Seek) -> anyhow::Result<Self> {
+		let mut hashing_reader = HashingReader::new(&mut reader);
+		
 		// read: flags
-		let flags = Flags::from_bytes(read_bytes(&mut reader)?);
+		let flags = Flags::from_bytes(read_bytes(&mut hashing_reader)?);
 		
 		// read: previous subarchive count (not yet implemented)
-		let prev_sub_archive_count = read_u32(&mut reader)?;
+		let prev_sub_archive_count = read_u32(&mut hashing_reader)?;
 		assert_eq!(prev_sub_archive_count, 0, "incremental backups not yet implemented");
 		
 		// read: source count
-		let source_count = read_u32(&mut reader)?;
+		let source_count = read_u32(&mut hashing_reader)?;
 		
 		// sources
 		// TODO: use SourceID newtype?
@@ -204,23 +211,23 @@ impl Header {
 		let mut entries: BTreeMap<String, Vec<FileInfo>> = BTreeMap::new();
 		for _ in 0..source_count {
 			// read: id length, id, entry count
-			let id = read_slice(&mut reader)?;
+			let id = read_slice(&mut hashing_reader)?;
 			let id = String::from_utf8(id).map_err(|err| {
 				let context = format!("invalid source name: {:?}", String::from_utf8_lossy(err.as_bytes()));
 				anyhow::anyhow!(err).context(context)
 			})?;
-			let entry_count = read_u32(&mut reader)?;
+			let entry_count = read_u32(&mut hashing_reader)?;
 			
 			// entries
 			let mut source_entries: Vec<FileInfo> = Vec::with_capacity(entry_count as usize);
 			for _ in 0..entry_count {
 				// read: hash, size, path_length, path
-				let hash = Hash::from_bytes(read_bytes(&mut reader)?);
-				let size = read_u64(&mut reader)?;
-				let path = EntryPath::from_bytes(read_slice(&mut reader)?)?;
+				let hash = FileHash(Hash::from_bytes(read_bytes(&mut hashing_reader)?));
+				let size = read_u64(&mut hashing_reader)?;
+				let path = EntryPath::from_bytes(read_slice(&mut hashing_reader)?)?;
 				
 				source_entries.push(FileInfo {
-					hash,
+					hash: hash,
 					path,
 					size,
 					position,
@@ -233,8 +240,11 @@ impl Header {
 			assert!(prev_entry.is_none());
 		}
 		
+		let hash = HeaderHash(hashing_reader.finalize());
+		
 		if flags.is_partial {
 			// read: remaining size
+			// NOTE: should not be included in hash
 			let remaining_size = read_u64(&mut reader)?;
 			reader.seek(SeekFrom::Current(remaining_size as i64))?;
 		}
@@ -242,6 +252,7 @@ impl Header {
 		Ok(Self {
 			flags,
 			entries,
+			hash,
 		})
 	}
 	
@@ -251,6 +262,10 @@ impl Header {
 	
 	pub fn entries(&self) -> &BTreeMap<String, Vec<FileInfo>> {
 		&self.entries
+	}
+	
+	pub fn hash(&self) -> HeaderHash {
+		self.hash
 	}
 }
 

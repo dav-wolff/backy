@@ -8,7 +8,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 base64 = "0.22"
-blake3 = "1.8"
+blake3 = { version = "1.8", features = ["mmap", "rayon"] }
 chacha20 = { version = "0.9", features = ["std"] }
 clap = { version = "4.5", features = ["derive"] }
 either = "1.13"

@@ -72,6 +72,9 @@ struct PackArgs {
 	/// File to write backup data to, or directory to write files to if --size is specified
 	#[arg(short, long, default_value = "backup.bky")]
 	out: PathBuf,
+	/// Parent archive for incremental backups (can be specified multiple times for multiple parents)
+	#[arg(short, long)]
+	parent: Vec<PathBuf>,
 	/// Maximum size of files in the out directory, defaults to GiB if no unit is given
 	#[arg(short, long, value_parser = parse_size)]
 	size: Option<u64>,
@@ -146,7 +149,10 @@ fn main() -> anyhow::Result<()> {
 	match args.command {
 		Commands::GenerateKey => unreachable!("handled with early return"),
 		Commands::Pack(pack_args) => {
-			backy::pack(pack_args.sources, pack_args.out, key, pack_args.size, !pack_args.no_progress)?;
+			let parents: Vec<_> = pack_args.parent.into_iter()
+				.map(|parent| Archive::new(parent, key))
+				.collect::<Result<_, _>>()?;
+			backy::pack(pack_args.sources, parents, pack_args.out, key, pack_args.size, !pack_args.no_progress)?;
 		},
 		Commands::Unpack(unpack_args) => {
 			Archive::new(unpack_args.archive, key)?

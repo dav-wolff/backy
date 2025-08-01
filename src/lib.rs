@@ -8,8 +8,10 @@ use std::{
 
 mod index;
 mod progress;
-mod header;
 mod hashing_reader;
+
+mod header;
+pub use header::{FileHash, HeaderHash, MultiHeaderHash, OriginHash};
 
 mod crypto;
 pub use crypto::{generate_key, Key};
