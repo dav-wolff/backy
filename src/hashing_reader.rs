@@ -16,6 +16,10 @@ impl<R: Read> HashingReader<R> {
 	pub fn finalize(&self) -> blake3::Hash {
 		self.hasher.finalize()
 	}
+	
+	pub fn into_inner(self) -> R {
+		self.inner
+	}
 }
 
 impl<R: Read> Read for HashingReader<R> {

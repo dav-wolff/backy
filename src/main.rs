@@ -177,6 +177,11 @@ fn main() -> anyhow::Result<()> {
 			let mut stdout = io::stdout().lock();
 			let mut reader = archive.get_file(get_args.source.as_ref().map(AsRef::as_ref), &get_args.path)?.unwrap();
 			io::copy(&mut reader, &mut stdout).context("reading file contents")?;
+			
+			if reader.is_corrupted() {
+				eprintln!("File is corrupted");
+				std::process::exit(1);
+			}
 		},
 	}
 	

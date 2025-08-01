@@ -137,6 +137,20 @@ impl ArchiveDescription {
 	fn unpack_path(self) -> PathBuf {
 		UNPACK_DIR.join(self.name)
 	}
+	
+	fn corrupt_unpack_path(self) -> PathBuf {
+		CORRUPT_UNPACK_DIR.join(self.name)
+	}
+	
+	fn content_size(self) -> u64 {
+		self.files()
+			.map(|file| file.content.len() as u64)
+			.sum()
+	}
+	
+	fn has_corrupt_archive(self) -> bool {
+		self.content_size() != 0
+	}
 }
 
 const KEY_TEXT: &str = "d6k//cJHeIXNlYn8ip1no0MDVWYBxZCEU/RwIzR5cMY=";
@@ -163,6 +177,7 @@ fn cleaned_dir(name: &'static str) -> PathBuf {
 static ARCHIVES_DIR: LazyLock<PathBuf> = LazyLock::new(|| cleaned_dir("archives"));
 static UNPACK_DIR: LazyLock<PathBuf> = LazyLock::new(|| cleaned_dir("unpacked_archives"));
 static CORRUPT_ARCHIVES_DIR: LazyLock<PathBuf> = LazyLock::new(|| cleaned_dir("corrupted_archives"));
+static CORRUPT_UNPACK_DIR: LazyLock<PathBuf> = LazyLock::new(|| cleaned_dir("unpacked_corrupted_archives"));
 
 // TODO: empty directory + other generated?
 const SOURCES: &[SourceDescription] = &[
@@ -210,14 +225,22 @@ const ARCHIVES: &[ArchiveDescription] = &[
 struct Archive {
 	description: ArchiveDescription,
 	archive: backy::Archive,
+	corrupt_archive: Option<backy::Archive>,
 }
 
 impl Archive {
 	fn load(description: ArchiveDescription) -> Self {
 		let archive = backy::Archive::new(description.archive_path(), *KEY).unwrap();
+		let corrupt_archive = if description.has_corrupt_archive() {
+			Some(backy::Archive::new(description.corrupt_archive_path(), *KEY).unwrap())
+		} else {
+			None
+		};
+		
 		Self {
 			description,
 			archive,
+			corrupt_archive,
 		}
 	}
 }
@@ -229,6 +252,8 @@ const TESTS: &[&dyn TestArchive] = &[
 	&GetTest,
 	&CheckTest,
 	&FailedCheckTest,
+	&FailedGetTest,
+	&FailedUnpackTest,
 ];
 
 #[test]
@@ -252,6 +277,23 @@ fn pack_archive(archive_description: ArchiveDescription) {
 		.collect();
 	
 	backy::pack(sources, archive_description.archive_path(), *KEY, None, false).unwrap();
+	
+	// corrupted copy
+	let corrupt_archive_path = archive_description.corrupt_archive_path();
+	fs::copy(archive_description.archive_path(), &corrupt_archive_path).unwrap();
+	
+	let mut file = OpenOptions::new()
+		.read(true)
+		.write(true)
+		.open(&corrupt_archive_path).unwrap();
+	// seek to the middle of the content
+	file.seek(io::SeekFrom::End(-(archive_description.content_size() as i64 / 2 + 1))).unwrap();
+	// change one byte
+	let mut buf = [0];
+	file.read_exact(&mut buf).unwrap();
+	buf[0] = buf[0].wrapping_add(1);
+	file.seek(io::SeekFrom::Current(-1)).unwrap();
+	file.write_all(&buf).unwrap();
 }
 
 trait TestArchive {
@@ -335,32 +377,51 @@ struct FailedCheckTest;
 
 impl TestArchive for FailedCheckTest {
 	fn test_archive(&self, archive: &mut Archive) {
-		let content_size: u64 = archive.description.files()
-			.map(|file| file.content.len() as u64)
-			.sum();
-		
-		// can't corrupt an archive with no content
-		if content_size == 0 {
+		let Some(corrupt_archive) = &mut archive.corrupt_archive else {
 			return;
-		}
-		
-		let corrupt_archive_path = archive.description.corrupt_archive_path();
-		fs::copy(archive.description.archive_path(), &corrupt_archive_path).unwrap();
-		
-		let mut file = OpenOptions::new()
-			.read(true)
-			.write(true)
-			.open(&corrupt_archive_path).unwrap();
-		// seek to the middle of the content
-		file.seek(io::SeekFrom::End(-(content_size as i64 / 2 + 1))).unwrap();
-		let mut buf = [0];
-		file.read_exact(&mut buf).unwrap();
-		buf[0] = buf[0].wrapping_add(1);
-		file.seek(io::SeekFrom::Current(-1)).unwrap();
-		file.write_all(&buf).unwrap();
-		
-		let mut corrupt_archive = backy::Archive::new(corrupt_archive_path, *KEY).unwrap();
+		};
 		
 		assert!(!corrupt_archive.check_integrity(false).unwrap());
+	}
+}
+
+struct FailedGetTest;
+
+impl TestArchive for FailedGetTest {
+	fn test_archive(&self, archive: &mut Archive) {
+		let Some(corrupt_archive) = &mut archive.corrupt_archive else {
+			return;
+		};
+		
+		let mut buf = Vec::new();
+		let mut corrupt_files = 0;
+		
+		for source in archive.description.sources() {
+			for file in source.files() {
+				let mut reader = corrupt_archive.get_file(Some(source.name), file.path).unwrap().unwrap();
+				reader.read_to_end(&mut buf).unwrap();
+				if reader.is_corrupted() {
+					corrupt_files += 1;
+				}
+			}
+		}
+		
+		// one byte of the archive was changed, so exactly one file should be affected
+		assert_eq!(corrupt_files, 1);
+	}
+}
+
+struct FailedUnpackTest;
+
+impl TestArchive for FailedUnpackTest {
+	fn test_archive(&self, archive: &mut Archive) {
+		let Some(corrupt_archive) = &mut archive.corrupt_archive else {
+			return;
+		};
+		
+		let result = corrupt_archive.unpack(archive.description.corrupt_unpack_path(), false);
+		
+		// TODO: check specific type of error
+		assert!(result.is_err());
 	}
 }

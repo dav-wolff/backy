@@ -1,8 +1,9 @@
 use std::{borrow::Borrow, io::{self, Read, Seek, SeekFrom}};
 
 use anyhow::{ensure, Context};
+use blake3::Hash;
 
-use crate::{crypto::{DecryptReader, IV}, header::{self, Header}, index::EntryPath, Key, BKY_HEADER};
+use crate::{crypto::{DecryptReader, IV}, hashing_reader::HashingReader, header::{self, Header}, index::EntryPath, Key, BKY_HEADER};
 
 pub struct SubArchive<R: Read + Seek> {
 	decrypter: DecryptReader<R>,
@@ -58,7 +59,7 @@ impl<R: Read + Seek> SubArchive<R> {
 			.map(|entry| entry.path.as_str())
 	}
 	
-	pub fn read_file<'s>(&'s mut self, source: &str, path: &EntryPath) -> anyhow::Result<Option<impl Read + use<'s, R>>> {
+	pub fn read_file<'s>(&'s mut self, source: &str, path: &EntryPath) -> anyhow::Result<Option<ArchiveReader<impl Read + use<'s, R>>>> {
 		let Some(source) = self.header.entries().get(source) else {
 			return Ok(None);
 		};
@@ -68,20 +69,28 @@ impl<R: Read + Seek> SubArchive<R> {
 		
 		self.decrypter.seek(SeekFrom::Start(self.contents_start + entry.position)).context("seeking to file contents")?;
 		
-		Ok(Some((&mut self.decrypter).take(entry.size)))
+		let reader = HashingReader::new((&mut self.decrypter).take(entry.size));
+		
+		Ok(Some(ArchiveReader {
+			reader,
+			expected_hash: entry.hash,
+		}))
 	}
 	
 	pub fn for_each_file<F, E>(&mut self, mut callback: F) -> Result<(), E>
 	where
-		F: FnMut(&str, &header::FileInfo, io::Take<&mut DecryptReader<R>>) -> Result<(), E>,
+		F: FnMut(&str, &header::FileInfo, ArchiveReader<io::Take<&mut DecryptReader<R>>>) -> Result<(), E>,
 		E: From<anyhow::Error>,
 	{
 		self.decrypter.seek(SeekFrom::Start(self.contents_start)).context("seeking to start of contents")?;
 		
 		for (source, entries) in self.header.entries() {
 			for entry in entries {
-				let reader = (&mut self.decrypter).take(entry.size);
-				callback(source, entry, reader)?;
+				let reader = HashingReader::new((&mut self.decrypter).take(entry.size));
+				callback(source, entry, ArchiveReader {
+					reader,
+					expected_hash: entry.hash,
+				})?;
 				// TODO: ensure that reader is fully read?
 			}
 		}
@@ -89,3 +98,25 @@ impl<R: Read + Seek> SubArchive<R> {
 		Ok(())
 	}
 }
+
+pub struct ArchiveReader<R: Read> {
+	reader: HashingReader<R>,
+	expected_hash: Hash,
+}
+
+impl<R: Read> Read for ArchiveReader<R> {
+	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+		self.reader.read(buf)
+	}
+}
+
+impl<R: Read> ArchiveReader<R> {
+	pub fn is_corrupted(&self) -> bool {
+		self.reader.finalize() != self.expected_hash
+	}
+	
+	pub fn into_inner(self) -> R {
+		self.reader.into_inner()
+	}
+}
+

@@ -7,6 +7,7 @@ use crate::{crypto::Key, index::EntryPath, progress::{NoopProgressDisplay, Progr
 
 mod sub_archive;
 use sub_archive::SubArchive;
+pub use sub_archive::ArchiveReader;
 
 pub struct Archive {
 	sub_archives: Vec<SubArchiveData>,
@@ -94,6 +95,7 @@ impl Archive {
 					fs::create_dir_all(parent).with_context(|| format!("creating out directory in {:?}", parent))?;
 					let mut out = File::create(&dest).with_context(|| format!("creating file at {:?}", dest))?;
 					io::copy(&mut reader, &mut out).with_context(|| format!("unpacking file to {:?}", dest))?;
+					ensure!(!reader.is_corrupted(), "file {:?} in source {source} is corrupted", path.as_path());
 					
 					progress_tracker.advance(file_info.size);
 					
@@ -128,7 +130,8 @@ impl Archive {
 			.try_for_each(|SubArchiveData { name, size, sub_archive }| {
 				let progress_tracker = progress_display.new_tracker(name.clone().into(), *size - sub_archive.contents_start());
 				
-				sub_archive.for_each_file(|source, file_info, mut reader| -> Result<(), CheckIntegrityError> {
+				sub_archive.for_each_file(|source, file_info, reader| -> Result<(), CheckIntegrityError> {
+					let mut reader = reader.into_inner();
 					let mut hasher = blake3::Hasher::new();
 					io::copy(&mut reader, &mut hasher)
 						.with_context(|| format!("reading file from {:?} at {:?}", source, file_info.path))
@@ -165,7 +168,7 @@ impl Archive {
 			.flat_map(|sub_archive| sub_archive.file_paths())
 	}
 	
-	pub fn get_file(&mut self, source: Option<&str>, path: &str) -> anyhow::Result<Option<impl Read>> {
+	pub fn get_file(&mut self, source: Option<&str>, path: &str) -> anyhow::Result<Option<ArchiveReader<impl Read>>> {
 		// TODO: is this necessary?
 		let entry_path = EntryPath::from_bytes(path.as_bytes().to_owned()).unwrap();
 		

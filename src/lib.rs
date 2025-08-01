@@ -7,6 +7,7 @@ mod index;
 mod progress;
 
 mod header;
+mod hashing_reader;
 mod crypto;
 pub use crypto::{generate_key, Key};
 
@@ -14,7 +15,7 @@ mod pack;
 pub use pack::pack;
 
 mod archive;
-pub use archive::Archive;
+pub use archive::{Archive, ArchiveReader};
 
 const BKY_HEADER: &[u8] = b"backy archive v0.2\n";
 
