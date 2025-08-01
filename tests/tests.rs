@@ -3,167 +3,19 @@
 use std::{
 	fs::{self, OpenOptions},
 	io::{self, Read, Seek, Write},
-	path::{Path, PathBuf},
 	sync::LazyLock,
 };
 use base64::{
 	prelude::BASE64_STANDARD,
 	Engine as _,
 };
-use either::{
-	Either,
-};
 
 use backy::{
 	Key,
 };
 
-#[derive(Clone, Copy, Debug)]
-enum OneOrMany<T>
-where
-	T: 'static + Copy,
-{
-	One(T),
-	Many(&'static [T]),
-}
-
-impl<T> OneOrMany<T>
-where
-	T: 'static + Copy,
-{
-	fn is_one(self) -> bool {
-		matches!(self, Self::One(_))
-	}
-}
-
-impl<T> IntoIterator for OneOrMany<T>
-where
-	T: Copy,
-{
-	type Item = T;
-	type IntoIter = Either<std::iter::Once<T>, std::iter::Copied<std::slice::Iter<'static, T>>>;
-	
-	fn into_iter(self) -> Self::IntoIter {
-		match self {
-			Self::One(item) => Either::Left(std::iter::once(item)),
-			Self::Many(items) => Either::Right(items.iter().copied()),
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug)]
-struct FileDescription {
-	path: &'static str,
-	content: &'static [u8],
-}
-
-impl FileDescription {
-	const fn new(path: &'static str, content: &'static [u8]) -> Self {
-		Self {
-			path,
-			content,
-		}
-	}
-}
-
-#[derive(Clone, Copy, Debug)]
-struct SourceDescription {
-	name: &'static str,
-	entries: OneOrMany<FileDescription>,
-}
-
-impl SourceDescription {
-	const fn new_single_file(name: &'static str, content: &'static [u8]) -> Self {
-		Self {
-			name,
-			entries: OneOrMany::One(FileDescription::new("", content)),
-		}
-	}
-	
-	const fn new(name: &'static str, entries: &'static [FileDescription]) -> Self {
-		Self {
-			name,
-			entries: OneOrMany::Many(entries),
-		}
-	}
-	
-	fn find(name: &str) -> Self {
-		*SOURCES.iter().find(|source| source.name == name).unwrap()
-	}
-	
-	fn files(self) -> impl Iterator<Item = FileDescription> {
-		self.entries.into_iter()
-	}
-	
-	fn is_file(self) -> bool {
-		self.entries.is_one()
-	}
-}
-
-const CIRCLE_PNG: &[u8] = include_bytes!("../test_sources/circle.png");
-const HELLO_WORLD: &[u8] = b"Hello world!\n";
-
-#[derive(Clone, Copy, Debug)]
-struct ArchiveDescription {
-	name: &'static str,
-	source_names: OneOrMany<&'static str>,
-}
-
-impl ArchiveDescription {
-	const fn new_single_source(name: &'static str) -> Self {
-		Self {
-			name,
-			source_names: OneOrMany::One(name),
-		}
-	}
-	
-	const fn new(name: &'static str, sources: &'static [&'static str]) -> Self {
-		Self {
-			name,
-			source_names: OneOrMany::Many(sources),
-		}
-	}
-	
-	fn sources(self) -> impl Iterator<Item = SourceDescription> {
-		self.source_names.into_iter()
-			.map(SourceDescription::find)
-	}
-	
-	fn files(self) -> impl Iterator<Item = FileDescription> {
-		self.sources()
-			.flat_map(SourceDescription::files)
-	}
-	
-	fn is_single_source(self) -> bool {
-		self.source_names.is_one()
-	}
-	
-	fn archive_path(self) -> PathBuf {
-		ARCHIVES_DIR.join(format!("{}.bky", self.name))
-	}
-	
-	fn corrupt_archive_path(self) -> PathBuf {
-		CORRUPT_ARCHIVES_DIR.join(format!("{}.bky", self.name))
-	}
-	
-	fn unpack_path(self) -> PathBuf {
-		UNPACK_DIR.join(self.name)
-	}
-	
-	fn corrupt_unpack_path(self) -> PathBuf {
-		CORRUPT_UNPACK_DIR.join(self.name)
-	}
-	
-	fn content_size(self) -> u64 {
-		self.files()
-			.map(|file| file.content.len() as u64)
-			.sum()
-	}
-	
-	fn has_corrupt_archive(self) -> bool {
-		self.content_size() != 0
-	}
-}
+mod common;
+use common::archive_description::*;
 
 const KEY_TEXT: &str = "d6k//cJHeIXNlYn8ip1no0MDVWYBxZCEU/RwIzR5cMY=";
 static KEY: LazyLock<Key> = LazyLock::new(|| {
@@ -173,66 +25,6 @@ static KEY: LazyLock<Key> = LazyLock::new(|| {
 	key
 });
 
-static SOURCES_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
-	Path::new(env!("CARGO_MANIFEST_DIR")).join("test_sources")
-});
-
-fn cleaned_dir(name: &'static str) -> PathBuf {
-	let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
-	if let Err(err) = fs::remove_dir_all(&dir) {
-		assert!(err.kind() == io::ErrorKind::NotFound);
-	}
-	fs::create_dir(&dir).unwrap();
-	dir
-}
-
-static ARCHIVES_DIR: LazyLock<PathBuf> = LazyLock::new(|| cleaned_dir("archives"));
-static UNPACK_DIR: LazyLock<PathBuf> = LazyLock::new(|| cleaned_dir("unpacked_archives"));
-static CORRUPT_ARCHIVES_DIR: LazyLock<PathBuf> = LazyLock::new(|| cleaned_dir("corrupted_archives"));
-static CORRUPT_UNPACK_DIR: LazyLock<PathBuf> = LazyLock::new(|| cleaned_dir("unpacked_corrupted_archives"));
-
-// TODO: empty directory + other generated?
-const SOURCES: &[SourceDescription] = &[
-	SourceDescription::new_single_file("empty_file", &[]),
-	SourceDescription::new_single_file("hello_world", HELLO_WORLD),
-	SourceDescription::new_single_file("circle.png", CIRCLE_PNG),
-	SourceDescription::new("single_empty_file", &[
-		FileDescription::new("empty_file", &[]),
-	]),
-	SourceDescription::new("single_file", &[
-		FileDescription::new("hello_world", HELLO_WORLD),
-	]),
-	SourceDescription::new("multiple_files", &[
-		FileDescription::new("empty", &[]),
-		FileDescription::new("hello_world", HELLO_WORLD),
-		FileDescription::new("circle.png", CIRCLE_PNG),
-	]),
-	SourceDescription::new("nested_files", &[
-		FileDescription::new("empty", &[]),
-		FileDescription::new("greetings/hello_world", HELLO_WORLD),
-		FileDescription::new("greetings/hello_there", b"Hello there!\n"),
-		FileDescription::new("greetings/hi", b"Hi"),
-		FileDescription::new("pictures/shapes/circle.png", CIRCLE_PNG),
-	]),
-	SourceDescription::new("deeply_nested", &[
-		FileDescription::new("very/deeply/nested/directory/structure/hello_world", HELLO_WORLD),
-	]),
-];
-
-const ARCHIVES: &[ArchiveDescription] = &[
-	ArchiveDescription::new_single_source("empty_file"),
-	ArchiveDescription::new_single_source("hello_world"),
-	ArchiveDescription::new_single_source("circle.png"),
-	ArchiveDescription::new_single_source("single_empty_file"),
-	ArchiveDescription::new_single_source("single_file"),
-	ArchiveDescription::new_single_source("multiple_files"),
-	ArchiveDescription::new_single_source("nested_files"),
-	ArchiveDescription::new_single_source("deeply_nested"),
-	ArchiveDescription::new("single_files", &["empty_file", "hello_world", "circle.png"]),
-	ArchiveDescription::new("directories", &["single_empty_file", "single_file", "multiple_files", "nested_files", "deeply_nested"]),
-	ArchiveDescription::new("mixed", &["empty_file", "multiple_files", "nested_files"]),
-	ArchiveDescription::new("all", &["empty_file", "hello_world", "circle.png", "single_empty_file", "single_file", "multiple_files", "nested_files", "deeply_nested"]),
-];
 
 struct Archive {
 	description: ArchiveDescription,
@@ -279,8 +71,6 @@ fn test() {
 			test.test_archive(&mut archive);
 		}
 	}
-	
-	println!("{SOURCES:?}")
 }
 
 fn pack_archive(archive_description: ArchiveDescription) {
